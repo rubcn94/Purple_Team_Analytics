@@ -1,0 +1,75 @@
+{
+  "hosts": [
+    {
+      "ip": "192.168.1.100",
+      "hostname": "LINUXHOST",
+      "os": "Linux (Debian/Ubuntu) 4.15 - 5.6",
+      "domain": "WORKGROUP",
+      "os_detect_method": "nmap",
+      "valid_credentials": [],
+      "blank_password_users": []
+    },
+    {
+      "ip": "192.168.1.101",
+      "hostname": "WINSERVER2019",
+      "os": "Windows Server 2019 Standard 17763 (Build 17763)",
+      "domain": "CORP.LOCAL",
+      "smb_shares": [
+        "admin$",
+        "c$",
+        "ipc$",
+        "shared"
+      ],
+      "smb_null_session": true,
+      "valid_credentials": [
+        "CORP\\Administrator:password123",
+        "CORP\\service_account:ServicePassword2023!"
+      ],
+      "blank_password_users": [
+        "Guest"
+      ],
+      "ldap_accessible": true,
+      "kerberos_asreproasting": [
+        "CORP\\krbtgt",
+        "CORP\\svc_sqlserver"
+      ],
+      "vulnerable_users": [
+        {
+          "username": "admin",
+          "issue": "Password in description field"
+        },
+        {
+          "username": "testuser",
+          "issue": "Password never expires"
+        }
+      ]
+    },
+    {
+      "ip": "192.168.1.50",
+      "hostname": "DC01",
+      "os": "Windows Server 2019 Standard 17763",
+      "domain": "CORP.LOCAL",
+      "is_domain_controller": true,
+      "ldap_signing": false,
+      "ldap_channel_binding": false,
+      "smb_signing": false,
+      "asreproasting_users": [
+        "CORP\\krbtgt",
+        "CORP\\svc_exchange",
+        "CORP\\svc_sharepoint"
+      ],
+      "valid_credentials": [
+        "CORP\\Domain Admins:AdminPass2023!"
+      ],
+      "blank_password_users": []
+    }
+  ],
+  "summary": {
+    "total_hosts": 3,
+    "valid_credentials_found": 3,
+    "blank_password_users_found": 2,
+    "domain_controllers": 1,
+    "smb_null_sessions": 1,
+    "asreproasting_targets": 5
+  }
+}

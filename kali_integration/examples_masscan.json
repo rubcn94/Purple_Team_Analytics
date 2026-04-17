@@ -1,0 +1,97 @@
+{
+  "results": [
+    {
+      "ip": "192.168.1.100",
+      "ports": [
+        {
+          "port": 22,
+          "proto": "tcp",
+          "status": "open",
+          "service": "ssh"
+        },
+        {
+          "port": 80,
+          "proto": "tcp",
+          "status": "open",
+          "service": "http"
+        },
+        {
+          "port": 443,
+          "proto": "tcp",
+          "status": "open",
+          "service": "https"
+        },
+        {
+          "port": 3306,
+          "proto": "tcp",
+          "status": "open",
+          "service": "mysql"
+        },
+        {
+          "port": 8080,
+          "proto": "tcp",
+          "status": "open",
+          "service": "http-proxy"
+        }
+      ]
+    },
+    {
+      "ip": "192.168.1.101",
+      "ports": [
+        {
+          "port": 135,
+          "proto": "tcp",
+          "status": "open",
+          "service": "epmap"
+        },
+        {
+          "port": 139,
+          "proto": "tcp",
+          "status": "open",
+          "service": "netbios-ssn"
+        },
+        {
+          "port": 445,
+          "proto": "tcp",
+          "status": "open",
+          "service": "smb"
+        },
+        {
+          "port": 3389,
+          "proto": "tcp",
+          "status": "open",
+          "service": "rdp"
+        }
+      ]
+    },
+    {
+      "ip": "192.168.1.50",
+      "ports": [
+        {
+          "port": 53,
+          "proto": "tcp",
+          "status": "open",
+          "service": "domain"
+        },
+        {
+          "port": 88,
+          "proto": "tcp",
+          "status": "open",
+          "service": "kerberos"
+        },
+        {
+          "port": 389,
+          "proto": "tcp",
+          "status": "open",
+          "service": "ldap"
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "total_hosts": 3,
+    "total_ports": 15,
+    "scan_time": "00:02:34",
+    "average_rate": "3000 ports/sec"
+  }
+}

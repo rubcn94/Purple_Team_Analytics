@@ -1,0 +1,79 @@
+# Credenciales y secretos (CRÍTICO - Purple Team)
+credentials*.json
+*_credentials.json
+token*.json
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+.env
+.env.local
+.env.*.local
+secrets/
+secrets.*
+*secret*
+*password*
+*api_key*
+id_rsa*
+*.ovpn
+
+# Purple Team - Archivos de ataque/payload sensibles
+payloads/
+exploits/private/
+c2/profiles/*.profile
+*.beacon
+loot/
+captured_creds/
+hash_dumps/
+
+# Certificados SSL/TLS (generar localmente)
+ssl_tls/*.key
+ssl_tls/*.pem
+ssl_tls/*.crt
+ssl_tls/*.p12
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Node.js (si hay herramientas JS)
+node_modules/
+package-lock.json
+yarn.lock
+
+# Claude local
+.claude/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs y reportes de pentesting
+*.log
+reports/private/
+*.pcap
+*.cap
+
+# Backups
+*.bak
+*.backup
+*.old

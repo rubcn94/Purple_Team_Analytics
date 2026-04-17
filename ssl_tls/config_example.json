@@ -1,0 +1,85 @@
+{
+  "ssl_analyzer_config": {
+    "description": "SSL/TLS Deep Analyzer Configuration Example",
+    "targets": [
+      {
+        "name": "Production Web Server",
+        "host": "api.example.com",
+        "port": 443,
+        "timeout": 10,
+        "enabled": true,
+        "schedule": "daily"
+      },
+      {
+        "name": "Internal Service",
+        "host": "192.168.1.100",
+        "port": 8443,
+        "timeout": 15,
+        "enabled": true,
+        "schedule": "weekly"
+      },
+      {
+        "name": "Development",
+        "host": "dev.example.com",
+        "port": 443,
+        "timeout": 10,
+        "enabled": false,
+        "schedule": "on_demand"
+      }
+    ],
+    "analysis_options": {
+      "check_tls_versions": true,
+      "enumerate_ciphers": true,
+      "extract_certificate": true,
+      "check_vulnerabilities": true,
+      "calculate_score": true,
+      "openssl_enhanced_analysis": true
+    },
+    "severity_thresholds": {
+      "critical": {
+        "weak_tls": ["SSLv3"],
+        "weak_ciphers": ["DES", "RC4", "MD5"],
+        "min_key_size": 1024,
+        "max_days_until_expiry": -1
+      },
+      "high": {
+        "deprecated_tls": ["TLSv1.0", "TLSv1.1"],
+        "weak_algorithms": ["SHA1"],
+        "min_key_size": 2048,
+        "max_days_until_expiry": 30
+      },
+      "medium": {
+        "weak_key_exchange": ["DH", "ECDH"],
+        "self_signed": true,
+        "chain_issues": true
+      }
+    },
+    "reporting": {
+      "output_format": ["json", "console"],
+      "save_json": true,
+      "save_audit_log": true,
+      "include_certificate_details": true,
+      "include_cipher_list": true,
+      "include_vulnerability_details": true
+    },
+    "integration": {
+      "send_to_orchestrator": true,
+      "send_to_report_generator": true,
+      "webhook_endpoint": null,
+      "webhook_enabled": false
+    },
+    "security": {
+      "verify_certificates": false,
+      "accept_self_signed": false,
+      "ssl_context_options": {
+        "check_hostname": false,
+        "verify_mode": "CERT_NONE"
+      }
+    },
+    "mitre_context": {
+      "technique": "T1557",
+      "tactic": "Collection",
+      "description": "Adversary-in-the-Middle - Identifies weaknesses exploitable for MITM attacks"
+    }
+  }
+}

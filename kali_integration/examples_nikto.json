@@ -1,0 +1,64 @@
+{
+  "vulnerabilities": [
+    {
+      "ip": "192.168.1.100",
+      "hostname": "test-server.local",
+      "port": "80",
+      "protocol": "http",
+      "description": "OSVDB-3092: /admin.php: This might be interesting.",
+      "msg": "OSVDB-3092: /admin.php: This might be interesting.",
+      "method": "GET",
+      "uri": "/admin.php",
+      "severity": "medium",
+      "cvss": 4.3
+    },
+    {
+      "ip": "192.168.1.100",
+      "hostname": "test-server.local",
+      "port": "80",
+      "protocol": "http",
+      "description": "Server: Apache/2.4.6 (CentOS) - header reported.",
+      "msg": "Server: Apache/2.4.6 (CentOS) - header reported.",
+      "method": "GET",
+      "uri": "/",
+      "severity": "low",
+      "cvss": 2.1
+    },
+    {
+      "ip": "192.168.1.100",
+      "hostname": "test-server.local",
+      "port": "443",
+      "protocol": "https",
+      "description": "Self-signed SSL certificate detected - possible man-in-the-middle attack.",
+      "msg": "Self-signed SSL certificate detected.",
+      "method": "GET",
+      "uri": "/",
+      "severity": "high",
+      "cvss": 6.5
+    },
+    {
+      "ip": "192.168.1.100",
+      "hostname": "test-server.local",
+      "port": "80",
+      "protocol": "http",
+      "description": "OSVDB-877: /cgi-bin/phf: cgiwrap before 1.7, Perl before 5.003 - Arbitrary file retrieval.",
+      "msg": "OSVDB-877: /cgi-bin/phf: Arbitrary file retrieval.",
+      "method": "GET",
+      "uri": "/cgi-bin/phf",
+      "severity": "critical",
+      "cvss": 9.8
+    },
+    {
+      "ip": "192.168.1.100",
+      "hostname": "test-server.local",
+      "port": "80",
+      "protocol": "http",
+      "description": "X-Frame-Options: SAMEORIGIN not set - clickjacking possible.",
+      "msg": "X-Frame-Options header not set",
+      "method": "GET",
+      "uri": "/",
+      "severity": "medium",
+      "cvss": 4.7
+    }
+  ]
+}

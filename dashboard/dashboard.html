@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Purple Team Security — Dashboard</title>
+<style>
+  :root {
+    --purple: #5a1a8b;
+    --purple-dark: #3a0a64;
+    --purple-light: #9b59d0;
+    --purple-bg: #f3eaff;
+    --red: #c82828;
+    --orange: #e67800;
+    --yellow: #b8a000;
+    --green: #1ea03c;
+    --blue: #1a5fb4;
+    --gray: #f5f5f5;
+    --gray-mid: #ccc;
+    --text: #222;
+    --text-light: #666;
+    --white: #fff;
+    --shadow: 0 2px 12px rgba(90,26,139,0.10);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #f0e8f7; color: var(--text); min-height: 100vh; }
+
+  /* Header */
+  header {
+    background: linear-gradient(135deg, var(--purple-dark) 0%, var(--purple) 100%);
+    color: white; padding: 18px 32px; display: flex; align-items: center; gap: 16px;
+    box-shadow: 0 4px 18px rgba(60,0,100,0.18);
+  }
+  header .logo { font-size: 28px; }
+  header h1 { font-size: 1.35rem; font-weight: 700; letter-spacing: 0.5px; }
+  header p { font-size: 0.78rem; opacity: 0.75; margin-top: 2px; }
+  header .spacer { flex: 1; }
+  header .btn-new {
+    background: rgba(255,255,255,0.15); border: 1.5px solid rgba(255,255,255,0.35);
+    color: white; padding: 8px 18px; border-radius: 6px; cursor: pointer;
+    font-size: 0.88rem; font-weight: 600; transition: all 0.2s;
+  }
+  header .btn-new:hover { background: rgba(255,255,255,0.25); }
+
+  /* Layout */
+  .container { max-width: 1300px; margin: 0 auto; padding: 28px 24px; }
+
+  /* Stats row */
+  .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 28px; }
+  .stat-card {
+    background: white; border-radius: 12px; padding: 20px; box-shadow: var(--shadow);
+    display: flex; align-items: center; gap: 16px;
+  }
+  .stat-icon { width: 48px; height: 48px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 22px; }
+  .stat-card.critical .stat-icon { background: #fde8e8; }
+  .stat-card.high .stat-icon { background: #fff0d6; }
+  .stat-card.audits .stat-icon { background: var(--purple-bg); }
+  .stat-card.compliance .stat-icon { background: #e8f5e9; }
+  .stat-value { font-size: 2rem; font-weight: 800; line-height: 1; }
+  .stat-card.critical .stat-value { color: var(--red); }
+  .stat-card.high .stat-value { color: var(--orange); }
+  .stat-card.audits .stat-value { color: var(--purple); }
+  .stat-card.compliance .stat-value { color: var(--green); }
+  .stat-label { font-size: 0.8rem; color: var(--text-light); margin-top: 3px; }
+
+  /* Grid content */
+  .content-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; margin-bottom: 24px; }
+  .card { background: white; border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
+  .card-header {
+    padding: 16px 20px; border-bottom: 1.5px solid #f0e8f7;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .card-header h2 { font-size: 0.95rem; font-weight: 700; color: var(--purple-dark); }
+  .card-header .badge {
+    background: var(--purple-bg); color: var(--purple); font-size: 0.72rem;
+    font-weight: 700; padding: 3px 10px; border-radius: 20px;
+  }
+  .card-body { padding: 16px 20px; }
+
+  /* Audit table */
+  .audit-table { width: 100%; border-collapse: collapse; }
+  .audit-table th { text-align: left; padding: 8px 12px; font-size: 0.75rem; color: var(--text-light); text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 2px solid var(--purple-bg); }
+  .audit-table td { padding: 10px 12px; font-size: 0.87rem; border-bottom: 1px solid #f5f0fa; vertical-align: middle; }
+  .audit-table tr:hover td { background: #faf5ff; cursor: pointer; }
+  .audit-table tr:last-child td { border-bottom: none; }
+  .risk-badge {
+    display: inline-block; padding: 3px 10px; border-radius: 20px;
+    font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px;
+  }
+  .risk-critical { background: #fde8e8; color: var(--red); }
+  .risk-high { background: #fff0d6; color: var(--orange); }
+  .risk-medium { background: #fffbe6; color: var(--yellow); }
+  .risk-low { background: #e8f5e9; color: var(--green); }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+  .dot-completed { background: var(--green); }
+  .dot-progress { background: var(--orange); }
+  .dot-pending { background: var(--gray-mid); }
+
+  /* Compliance panel */
+  .compliance-item { margin-bottom: 14px; }
+  .compliance-label { display: flex; justify-content: space-between; font-size: 0.82rem; margin-bottom: 5px; }
+  .compliance-label span:first-child { font-weight: 600; color: var(--text); }
+  .compliance-label span:last-child { color: var(--text-light); }
+  .progress-bar { height: 8px; background: var(--gray); border-radius: 4px; overflow: hidden; }
+  .progress-fill { height: 100%; border-radius: 4px; transition: width 0.8s ease; }
+  .fill-good { background: linear-gradient(90deg, var(--green), #4caf50); }
+  .fill-medium { background: linear-gradient(90deg, var(--yellow), #ffc107); }
+  .fill-bad { background: linear-gradient(90deg, var(--red), #ef5350); }
+
+  /* Recent findings */
+  .finding-item {
+    display: flex; align-items: flex-start; gap: 12px; padding: 10px 0;
+    border-bottom: 1px solid #f5f0fa;
+  }
+  .finding-item:last-child { border-bottom: none; }
+  .finding-sev { width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0; }
+  .sev-critical { background: #fde8e8; }
+  .sev-high { background: #fff0d6; }
+  .sev-medium { background: #fffbe6; }
+  .finding-title { font-size: 0.85rem; font-weight: 600; line-height: 1.3; }
+  .finding-meta { font-size: 0.75rem; color: var(--text-light); margin-top: 2px; }
+
+  /* Full width card */
+  .full-width { grid-column: 1 / -1; }
+
+  /* Module grid */
+  .module-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  .module-card {
+    border: 1.5px solid var(--purple-bg); border-radius: 10px; padding: 16px;
+    text-align: center; transition: all 0.2s; cursor: pointer;
+  }
+  .module-card:hover { border-color: var(--purple-light); background: var(--purple-bg); transform: translateY(-2px); }
+  .module-icon { font-size: 28px; margin-bottom: 8px; }
+  .module-name { font-size: 0.82rem; font-weight: 700; color: var(--purple-dark); margin-bottom: 4px; }
+  .module-desc { font-size: 0.72rem; color: var(--text-light); line-height: 1.4; }
+  .module-status { margin-top: 8px; }
+
+  /* Modal */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+    z-index: 1000; align-items: center; justify-content: center; padding: 20px;
+  }
+  .modal-overlay.active { display: flex; }
+  .modal {
+    background: white; border-radius: 16px; max-width: 600px; width: 100%;
+    max-height: 85vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+  }
+  .modal-header {
+    background: linear-gradient(135deg, var(--purple-dark), var(--purple));
+    color: white; padding: 20px 24px; border-radius: 16px 16px 0 0;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .modal-header h3 { font-size: 1.1rem; }
+  .modal-close { cursor: pointer; font-size: 22px; opacity: 0.8; border: none; background: none; color: white; }
+  .modal-body { padding: 24px; }
+  .form-group { margin-bottom: 16px; }
+  .form-group label { display: block; font-size: 0.82rem; font-weight: 600; color: var(--purple-dark); margin-bottom: 6px; }
+  .form-group input, .form-group select, .form-group textarea {
+    width: 100%; padding: 10px 14px; border: 1.5px solid var(--gray-mid);
+    border-radius: 8px; font-size: 0.9rem; transition: border-color 0.2s;
+    font-family: inherit;
+  }
+  .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+    outline: none; border-color: var(--purple-light);
+    box-shadow: 0 0 0 3px rgba(90,26,139,0.08);
+  }
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .btn { padding: 10px 20px; border-radius: 8px; border: none; cursor: pointer; font-size: 0.88rem; font-weight: 600; transition: all 0.2s; }
+  .btn-primary { background: var(--purple); color: white; }
+  .btn-primary:hover { background: var(--purple-dark); }
+  .btn-secondary { background: var(--gray); color: var(--text); }
+  .btn-secondary:hover { background: var(--gray-mid); }
+  .modal-footer { display: flex; gap: 10px; justify-content: flex-end; padding-top: 8px; border-top: 1px solid var(--gray); margin-top: 16px; }
+
+  /* Risk gauge */
+  .risk-gauge { display: flex; align-items: center; justify-content: center; padding: 16px 0; }
+  .gauge-circle {
+    width: 110px; height: 110px; border-radius: 50%;
+    background: conic-gradient(var(--purple) 0% 72%, var(--gray) 72% 100%);
+    display: flex; align-items: center; justify-content: center; position: relative;
+  }
+  .gauge-inner {
+    width: 80px; height: 80px; border-radius: 50%; background: white;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+  }
+  .gauge-value { font-size: 1.5rem; font-weight: 800; color: var(--purple); }
+  .gauge-label { font-size: 0.65rem; color: var(--text-light); }
+
+  /* Tooltip */
+  .tooltip { position: relative; }
+  .tooltip:hover::after {
+    content: attr(data-tip); position: absolute; bottom: 125%; left: 50%; transform: translateX(-50%);
+    background: var(--purple-dark); color: white; padding: 5px 10px; border-radius: 6px;
+    font-size: 0.75rem; white-space: nowrap; z-index: 100;
+  }
+
+  /* Responsive */
+  @media (max-width: 1024px) {
+    .stats-grid { grid-template-columns: repeat(2, 1fr); }
+    .content-grid { grid-template-columns: 1fr; }
+    .module-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 600px) {
+    .stats-grid { grid-template-columns: 1fr 1fr; }
+    .module-grid { grid-template-columns: repeat(2, 1fr); }
+    .form-row { grid-template-columns: 1fr; }
+    header h1 { font-size: 1rem; }
+  }
+
+  .empty-state { text-align: center; padding: 32px 16px; color: var(--text-light); }
+  .empty-state .empty-icon { font-size: 40px; margin-bottom: 12px; }
+  .empty-state p { font-size: 0.88rem; }
+
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.72rem; font-weight: 600; margin: 2px; }
+  .tag-wifi { background: #e3f2fd; color: #1565c0; }
+  .tag-web { background: #f3e5f5; color: #6a1b9a; }
+  .tag-osint { background: #e8f5e9; color: #1b5e20; }
+  .tag-network { background: #fff8e1; color: #e65100; }
+  .tag-compliance { background: #fce4ec; color: #880e4f; }
+  .tag-blue { background: #e1f5fe; color: #01579b; }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header>
+  <span class="logo">🟣</span>
+  <div>
+    <h1>Purple Team Security</h1>
+    <p>Panel de Gestión de Auditorías</p>
+  </div>
+  <div class="spacer"></div>
+  <button class="btn-new" onclick="openModal()">+ Nueva Auditoría</button>
+</header>
+
+<!-- MAIN CONTENT -->
+<div class="container">
+
+  <!-- Stats -->
+  <div class="stats-grid">
+    <div class="stat-card critical">
+      <div class="stat-icon">🚨</div>
+      <div>
+        <div class="stat-value" id="stat-critical">0</div>
+        <div class="stat-label">Hallazgos Críticos</div>
+      </div>
+    </div>
+    <div class="stat-card high">
+      <div class="stat-icon">🔴</div>
+      <div>
+        <div class="stat-value" id="stat-high">0</div>
+        <div class="stat-label">Hallazgos Altos</div>
+      </div>
+    </div>
+    <div class="stat-card audits">
+      <div class="stat-icon">📋</div>
+      <div>
+        <div class="stat-value" id="stat-audits">0</div>
+        <div class="stat-label">Auditorías Registradas</div>
+      </div>
+    </div>
+    <div class="stat-card compliance">
+      <div class="stat-icon">✅</div>
+      <div>
+        <div class="stat-value" id="stat-compliance">—</div>
+        <div class="stat-label">Compliance Medio</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Content grid -->
+  <div class="content-grid">
+
+    <!-- Auditorías recientes -->
+    <div class="card">
+      <div class="card-header">
+        <h2>📁 Auditorías</h2>
+        <span class="badge" id="audit-count-badge">0 registros</span>
+      </div>
+      <div class="card-body">
+        <div id="audit-list-empty" class="empty-state">
+          <div class="empty-icon">📭</div>
+          <p>No hay auditorías registradas aún.<br>Pulsa <b>+ Nueva Auditoría</b> para empezar.</p>
+        </div>
+        <table class="audit-table" id="audit-table" style="display:none">
+          <thead>
+            <tr>
+              <th>Cliente</th>
+              <th>Fecha</th>
+              <th>Tipo</th>
+              <th>Riesgo</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody id="audit-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Compliance panel -->
+    <div class="card">
+      <div class="card-header">
+        <h2>📊 Compliance</h2>
+      </div>
+      <div class="card-body">
+        <div class="risk-gauge">
+          <div class="gauge-circle" id="gauge-circle">
+            <div class="gauge-inner">
+              <div class="gauge-value" id="gauge-value">—</div>
+              <div class="gauge-label">Score medio</div>
+            </div>
+          </div>
+        </div>
+        <div id="compliance-bars">
+          <div class="compliance-item">
+            <div class="compliance-label"><span>RGPD</span><span id="rgpd-pct">—%</span></div>
+            <div class="progress-bar"><div class="progress-fill fill-bad" id="rgpd-bar" style="width:0%"></div></div>
+          </div>
+          <div class="compliance-item">
+            <div class="compliance-label"><span>ENS</span><span id="ens-pct">—%</span></div>
+            <div class="progress-bar"><div class="progress-fill fill-medium" id="ens-bar" style="width:0%"></div></div>
+          </div>
+          <div class="compliance-item">
+            <div class="compliance-label"><span>PCI DSS</span><span id="pci-pct">—%</span></div>
+            <div class="progress-bar"><div class="progress-fill fill-good" id="pci-bar" style="width:0%"></div></div>
+          </div>
+          <div class="compliance-item">
+            <div class="compliance-label"><span>ISO 27001</span><span id="iso-pct">—%</span></div>
+            <div class="progress-bar"><div class="progress-fill fill-medium" id="iso-bar" style="width:0%"></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Hallazgos recientes -->
+    <div class="card full-width">
+      <div class="card-header">
+        <h2>🔍 Hallazgos Recientes</h2>
+        <span class="badge" id="finding-count-badge">0</span>
+      </div>
+      <div class="card-body">
+        <div id="findings-empty" class="empty-state">
+          <div class="empty-icon">🔎</div>
+          <p>Los hallazgos aparecerán aquí cuando registres resultados de auditorías.</p>
+        </div>
+        <div id="findings-list"></div>
+      </div>
+    </div>
+
+    <!-- Módulos disponibles -->
+    <div class="card full-width">
+      <div class="card-header">
+        <h2>⚙️ Módulos de la Suite</h2>
+        <span class="badge">Purple Team v2.0</span>
+      </div>
+      <div class="card-body">
+        <div class="module-grid">
+          <div class="module-card" onclick="showModuleCmd('orchestrator')">
+            <div class="module-icon">🎛️</div>
+            <div class="module-name">Orchestrator</div>
+            <div class="module-desc">Lanza todos los módulos de forma coordinada</div>
+            <div class="module-status"><span class="tag tag-web">principal</span></div>
+          </div>
+          <div class="module-card" onclick="showModuleCmd('wifi')">
+            <div class="module-icon">📶</div>
+            <div class="module-name">WiFi Suite</div>
+            <div class="module-desc">Rogue AP, client isolation, router defaults, network exposure</div>
+            <div class="module-status"><span class="tag tag-wifi">red team</span></div>
+          </div>
+          <div class="module-card" onclick="showModuleCmd('osint')">
+            <div class="module-icon">🔍</div>
+            <div class="module-name">OSINT Recon</div>
+            <div class="module-desc">Google Dorks, brechas, WHOIS, cert transparency</div>
+            <div class="module-status"><span class="tag tag-osint">pasivo</span></div>
+          </div>
+          <div class="module-card" onclick="showModuleCmd('blue')">
+            <div class="module-icon">🛡️</div>
+            <div class="module-name">Blue Team Monitor</div>
+            <div class="module-desc">IoC detection, hardening CIS, análisis de logs, ARP spoofing</div>
+            <div class="module-status"><span class="tag tag-blue">defensivo</span></div>
+          </div>
+          <div class="module-card" onclick="showModuleCmd('compliance')">
+            <div class="module-icon">⚖️</div>
+            <div class="module-name">Compliance Checker</div>
+            <div class="module-desc">RGPD, ENS, PCI DSS — evaluación normativa</div>
+            <div class="module-status"><span class="tag tag-compliance">normativo</span></div>
+          </div>
+          <div class="module-card" onclick="showModuleCmd('ssl')">
+            <div class="module-icon">🔐</div>
+            <div class="module-name">SSL/TLS Analyzer</div>
+            <div class="module-desc">Versión TLS, cifrados, expiración certificado</div>
+            <div class="module-status"><span class="tag tag-network">activo</span></div>
+          </div>
+          <div class="module-card" onclick="showModuleCmd('bluetooth')">
+            <div class="module-icon">📡</div>
+            <div class="module-name">Bluetooth Security</div>
+            <div class="module-desc">Dispositivos expuestos, pairing inseguro, demo para clientes</div>
+            <div class="module-status"><span class="tag tag-wifi">demo</span></div>
+          </div>
+          <div class="module-card" onclick="showModuleCmd('report')">
+            <div class="module-icon">📄</div>
+            <div class="module-name">Report Generator Pro</div>
+            <div class="module-desc">PDF profesional con branding, gráficas y executive summary</div>
+            <div class="module-status"><span class="tag tag-web">output</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- MODAL Nueva Auditoría -->
+<div class="modal-overlay" id="modal-overlay" onclick="closeModal(event)">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>📋 Nueva Auditoría</h3>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-group">
+          <label>Nombre del cliente *</label>
+          <input type="text" id="f-client" placeholder="Ej: Restaurante El Sol">
+        </div>
+        <div class="form-group">
+          <label>Dominio / URL</label>
+          <input type="text" id="f-url" placeholder="empresa.com">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Sector</label>
+          <select id="f-sector">
+            <option value="">Seleccionar...</option>
+            <option value="restaurante">Restaurante / Bar</option>
+            <option value="clinica">Clínica / Salud</option>
+            <option value="gimnasio">Gimnasio / Deporte</option>
+            <option value="educacion">Academia / Educación</option>
+            <option value="ecommerce">Tienda Online</option>
+            <option value="coworking">Coworking / Oficina</option>
+            <option value="otro">Otro</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Tipo de auditoría</label>
+          <select id="f-type">
+            <option value="external">External (web + SSL + OSINT)</option>
+            <option value="full">Full (todos los módulos)</option>
+            <option value="wifi">Solo WiFi</option>
+            <option value="web">Solo Web</option>
+            <option value="compliance">Solo Compliance</option>
+            <option value="quick">Quick (prospección 3 min)</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Nivel de riesgo inicial</label>
+          <select id="f-risk">
+            <option value="">Sin evaluar</option>
+            <option value="critical">Crítico 🚨</option>
+            <option value="high">Alto 🔴</option>
+            <option value="medium">Medio 🟡</option>
+            <option value="low">Bajo 🟢</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Estado</label>
+          <select id="f-status">
+            <option value="pending">Pendiente</option>
+            <option value="progress">En progreso</option>
+            <option value="completed">Completada</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Notas</label>
+        <textarea id="f-notes" rows="3" placeholder="Notas internas, contacto, contexto..."></textarea>
+      </div>
+      <div class="form-group">
+        <label>Scores de compliance (opcional)</label>
+        <div class="form-row">
+          <input type="number" id="f-rgpd" placeholder="RGPD %" min="0" max="100">
+          <input type="number" id="f-ens" placeholder="ENS %" min="0" max="100">
+          <input type="number" id="f-pci" placeholder="PCI DSS %" min="0" max="100">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+        <button class="btn btn-primary" onclick="saveAudit()">Guardar Auditoría</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL Comando del módulo -->
+<div class="modal-overlay" id="cmd-modal-overlay" onclick="closeCmdModal(event)">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="cmd-modal-title">Comando del módulo</h3>
+      <button class="modal-close" onclick="closeCmdModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:0.85rem; color:#555; margin-bottom:14px;" id="cmd-modal-desc"></p>
+      <div style="background:#1a1a2e; border-radius:8px; padding:16px; margin-bottom:14px;">
+        <pre id="cmd-modal-code" style="color:#b0e0ff; font-size:0.82rem; white-space:pre-wrap; font-family:monospace;"></pre>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeCmdModal()">Cerrar</button>
+        <button class="btn btn-primary" onclick="copyCmd()">📋 Copiar comando</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─── Estado de la app ─────────────────────────────────────────────────────────
+let audits = JSON.parse(localStorage.getItem('pt_audits') || '[]');
+let findings = [];
+
+// ─── Comandos de módulos ──────────────────────────────────────────────────────
+const MODULE_CMDS = {
+  orchestrator: {
+    title: "🎛️ Orchestrator — Auditoría completa",
+    desc: "Lanza todos los módulos de forma coordinada. Recomendado para auditorías completas.",
+    code: `# Auditoría externa completa
+python orchestrator.py --mode external --target empresa.com --domain empresa.com --url https://empresa.com --client "Nombre Cliente"
+
+# Auditoría completa (todos los módulos)
+python orchestrator.py --mode full --target empresa.com --client "Cliente"
+
+# Solo WiFi
+python orchestrator.py --mode wifi --client "Cliente"
+
+# Escaneo rápido de prospección (2-3 min)
+python prospect_scan.py --url https://empresa.com --client "La Taberna"`
+  },
+  wifi: {
+    title: "📶 WiFi Suite — Door-openers para demos",
+    desc: "4 herramientas diseñadas para demostrar vulnerabilidades WiFi reales a clientes PYME.",
+    code: `# Suite completa WiFi
+python wifi/wifi_audit_suite.py
+
+# Detector de Rogue AP (Evil Twin)
+python wifi/rogue_ap_detector.py
+
+# Test de aislamiento de clientes + POS
+python wifi/client_isolation_tester.py
+
+# Credenciales por defecto del router
+python wifi/router_default_checker.py
+
+# Dispositivos expuestos en la red
+python wifi/network_exposure_scanner.py
+
+# Análisis WEP/WPS/WPA
+python wifi/wifi_security_analyzer.py`
+  },
+  osint: {
+    title: "🔍 OSINT Recon — Inteligencia pasiva",
+    desc: "Recolecta información pública: WHOIS, DNS, brechas, Google Dorks, Certificate Transparency.",
+    code: `# OSINT completo de dominio
+python osint/osint_recon.py --domain empresa.com
+
+# Con email específico
+python osint/osint_recon.py --domain empresa.com --email info@empresa.com
+
+# Con URL para análisis de tecnología
+python osint/osint_recon.py --domain empresa.com --url https://empresa.com
+
+# Solo por nombre de empresa
+python osint/osint_recon.py --company "Empresa SA"`
+  },
+  blue: {
+    title: "🛡️ Blue Team Monitor — Defensa activa",
+    desc: "Analiza el estado defensivo: IoCs, hardening CIS, logs de autenticación, anomalías de red.",
+    code: `# Análisis completo (todos los módulos)
+python blue_team/blue_team_monitor.py
+
+# Solo indicadores de compromiso (IoC)
+python blue_team/blue_team_monitor.py --mode ioc
+
+# Solo hardening CIS Benchmark
+python blue_team/blue_team_monitor.py --mode hardening
+
+# Solo análisis de logs
+python blue_team/blue_team_monitor.py --mode logs
+
+# Solo análisis de red
+python blue_team/blue_team_monitor.py --mode network`
+  },
+  compliance: {
+    title: "⚖️ Compliance Checker — RGPD, ENS, PCI DSS",
+    desc: "Evalúa el cumplimiento normativo del sitio web. Genera informe de brechas con referencias legales.",
+    code: `# Evaluación completa de todos los frameworks
+python compliance/compliance_checker.py --url https://empresa.com
+
+# Con sector específico (requisitos adicionales)
+python compliance/compliance_checker.py --url https://empresa.com --sector restaurante
+python compliance/compliance_checker.py --url https://empresa.com --sector clinica
+python compliance/compliance_checker.py --url https://empresa.com --sector gimnasio
+
+# Solo RGPD
+python compliance/compliance_checker.py --url https://empresa.com --framework rgpd
+
+# Solo ENS
+python compliance/compliance_checker.py --url https://empresa.com --framework ens`
+  },
+  ssl: {
+    title: "🔐 SSL/TLS Analyzer",
+    desc: "Analiza configuración SSL/TLS: versión, cifrados, expiración del certificado.",
+    code: `# Análisis SSL básico
+python ssl_tls/ssl_analyzer.py --target empresa.com
+
+# Con configuración específica
+python ssl_tls/ssl_analyzer.py --target empresa.com --port 443`
+  },
+  bluetooth: {
+    title: "📡 Bluetooth Security — Demo para clientes",
+    desc: "Escanea dispositivos Bluetooth cercanos y detecta vulnerabilidades. Ideal para demos en gimnasios y locales.",
+    code: `# Escaneo de dispositivos Bluetooth visibles
+python bluetooth/bluetooth_security.py
+
+# Modo demo (para mostrar a cliente)
+python bluetooth/bluetooth_security.py --mode demo
+
+# Análisis completo con verificación de vulnerabilidades
+python bluetooth/bluetooth_security.py --mode full --duration 60`
+  },
+  report: {
+    title: "📄 Report Generator Pro — PDF profesional",
+    desc: "Genera informe PDF con branding, gráficas, executive summary y plan de remediación.",
+    code: `# Generar informe de sesión completa
+python report_generator_pro.py --session ./sessions/20260322_103000_cliente/ --client "Empresa SA"
+
+# Informe ejecutivo
+python report_generator_pro.py --session ./sessions/XYZ/ --client "Cliente" --type executive
+
+# Con archivos JSON específicos
+python report_generator_pro.py --json results.json blue_team.json --client "Cliente"
+
+# Instalar dependencia (en PC)
+pip install reportlab`
+  }
+};
+
+// ─── Render audits ────────────────────────────────────────────────────────────
+function renderAudits() {
+  const tbody = document.getElementById('audit-tbody');
+  const empty = document.getElementById('audit-list-empty');
+  const table = document.getElementById('audit-table');
+  const badge = document.getElementById('audit-count-badge');
+
+  badge.textContent = audits.length + ' registros';
+  document.getElementById('stat-audits').textContent = audits.length;
+
+  if (audits.length === 0) {
+    empty.style.display = 'block';
+    table.style.display = 'none';
+    return;
+  }
+  empty.style.display = 'none';
+  table.style.display = 'table';
+  tbody.innerHTML = '';
+
+  let totalCritical = 0, totalHigh = 0;
+  let rgpdTotal = 0, rgpdCount = 0;
+
+  audits.forEach((a, i) => {
+    const tr = document.createElement('tr');
+    tr.onclick = () => editAudit(i);
+    const riskClass = a.risk ? `risk-${a.risk}` : '';
+    const riskLabel = a.risk ? a.risk.charAt(0).toUpperCase() + a.risk.slice(1) : '—';
+    const statusDot = a.status === 'completed' ? 'dot-completed' : a.status === 'progress' ? 'dot-progress' : 'dot-pending';
+    const statusLabel = a.status === 'completed' ? 'Completada' : a.status === 'progress' ? 'En progreso' : 'Pendiente';
+    const sectorTag = a.sector ? `<span class="tag tag-compliance">${a.sector}</span>` : '';
+    tr.innerHTML = `
+      <td><strong>${a.client}</strong><br><small style="color:#888">${a.url || ''}</small></td>
+      <td>${a.date}</td>
+      <td><span class="tag tag-web">${a.type}</span> ${sectorTag}</td>
+      <td>${riskLabel ? `<span class="risk-badge ${riskClass}">${riskLabel}</span>` : '—'}</td>
+      <td><span class="status-dot ${statusDot}"></span>${statusLabel}</td>
+    `;
+    tbody.appendChild(tr);
+
+    if (a.rgpd) { rgpdTotal += parseInt(a.rgpd); rgpdCount++; }
+  });
+
+  // Update compliance bars
+  updateComplianceBars();
+  updateStats();
+}
+
+function updateStats() {
+  const criticals = audits.filter(a => a.risk === 'critical').length;
+  const highs = audits.filter(a => a.risk === 'high').length;
+  document.getElementById('stat-critical').textContent = criticals;
+  document.getElementById('stat-high').textContent = highs;
+
+  const withCompliance = audits.filter(a => a.rgpd || a.ens || a.pci);
+  if (withCompliance.length > 0) {
+    const scores = withCompliance.map(a => {
+      const vals = [a.rgpd, a.ens, a.pci].filter(v => v).map(Number);
+      return vals.reduce((s,v) => s+v, 0) / vals.length;
+    });
+    const avg = Math.round(scores.reduce((s,v)=>s+v,0)/scores.length);
+    document.getElementById('stat-compliance').textContent = avg + '%';
+  }
+}
+
+function updateComplianceBars() {
+  const fields = [
+    { key: 'rgpd', barId: 'rgpd-bar', pctId: 'rgpd-pct' },
+    { key: 'ens',  barId: 'ens-bar',  pctId: 'ens-pct'  },
+    { key: 'pci',  barId: 'pci-bar',  pctId: 'pci-pct'  },
+  ];
+  fields.forEach(f => {
+    const vals = audits.filter(a => a[f.key]).map(a => parseInt(a[f.key]));
+    if (vals.length > 0) {
+      const avg = Math.round(vals.reduce((s,v)=>s+v,0)/vals.length);
+      document.getElementById(f.barId).style.width = avg + '%';
+      document.getElementById(f.pctId).textContent = avg + '%';
+      const fillClass = avg >= 75 ? 'fill-good' : avg >= 50 ? 'fill-medium' : 'fill-bad';
+      document.getElementById(f.barId).className = 'progress-fill ' + fillClass;
+      // Update gauge
+      document.getElementById('gauge-value').textContent = avg + '%';
+      const pct = avg / 100;
+      document.getElementById('gauge-circle').style.background =
+        `conic-gradient(var(--purple) 0% ${avg}%, #eee ${avg}% 100%)`;
+    }
+  });
+
+  // ISO estimate
+  const allScores = audits.flatMap(a => [a.rgpd, a.ens, a.pci].filter(v=>v).map(Number));
+  if (allScores.length > 0) {
+    const isoEst = Math.round(allScores.reduce((s,v)=>s+v,0)/allScores.length);
+    document.getElementById('iso-bar').style.width = isoEst + '%';
+    document.getElementById('iso-pct').textContent = '~' + isoEst + '%';
+  }
+}
+
+// ─── Modal handlers ───────────────────────────────────────────────────────────
+function openModal() {
+  document.getElementById('modal-overlay').classList.add('active');
+  document.getElementById('f-client').focus();
+}
+
+function closeModal(e) {
+  if (!e || e.target === document.getElementById('modal-overlay')) {
+    document.getElementById('modal-overlay').classList.remove('active');
+    clearForm();
+  }
+}
+
+function clearForm() {
+  ['f-client','f-url','f-notes','f-rgpd','f-ens','f-pci'].forEach(id => {
+    document.getElementById(id).value = '';
+  });
+  ['f-sector','f-type','f-risk','f-status'].forEach(id => {
+    document.getElementById(id).selectedIndex = 0;
+  });
+}
+
+function saveAudit() {
+  const client = document.getElementById('f-client').value.trim();
+  if (!client) { alert('El nombre del cliente es obligatorio.'); return; }
+
+  const audit = {
+    id: Date.now(),
+    client,
+    url: document.getElementById('f-url').value.trim(),
+    sector: document.getElementById('f-sector').value,
+    type: document.getElementById('f-type').value,
+    risk: document.getElementById('f-risk').value,
+    status: document.getElementById('f-status').value,
+    notes: document.getElementById('f-notes').value.trim(),
+    rgpd: document.getElementById('f-rgpd').value,
+    ens: document.getElementById('f-ens').value,
+    pci: document.getElementById('f-pci').value,
+    date: new Date().toLocaleDateString('es-ES'),
+  };
+
+  audits.unshift(audit);
+  localStorage.setItem('pt_audits', JSON.stringify(audits));
+  renderAudits();
+  closeModal();
+
+  // Añadir finding de ejemplo si hay riesgo
+  if (audit.risk === 'critical' || audit.risk === 'high') {
+    addAutoFindings(audit);
+  }
+}
+
+function editAudit(idx) {
+  const a = audits[idx];
+  // Simple: mostrar info en console
+  // En versión completa habría modal de edición
+  showToast(`Cliente: ${a.client} | Riesgo: ${a.risk || 'sin evaluar'} | ${a.notes || 'sin notas'}`);
+}
+
+function addAutoFindings(audit) {
+  const newFinding = {
+    id: Date.now(),
+    client: audit.client,
+    type: `Riesgo ${audit.risk} detectado en nueva auditoría`,
+    severity: audit.risk,
+    detail: `Nueva auditoría registrada para ${audit.client}`,
+    date: audit.date,
+  };
+  findings.unshift(newFinding);
+  renderFindings();
+}
+
+function renderFindings() {
+  const list = document.getElementById('findings-list');
+  const empty = document.getElementById('findings-empty');
+  const badge = document.getElementById('finding-count-badge');
+
+  badge.textContent = findings.length;
+  if (findings.length === 0) {
+    empty.style.display = 'block';
+    list.style.display = 'none';
+    return;
+  }
+  empty.style.display = 'none';
+  list.style.display = 'block';
+  list.innerHTML = '';
+
+  const icons = { critical: '🚨', high: '🔴', medium: '🟡', low: '🟢', info: 'ℹ️' };
+  const sevClass = { critical: 'sev-critical', high: 'sev-high', medium: 'sev-medium' };
+
+  findings.slice(0, 8).forEach(f => {
+    const div = document.createElement('div');
+    div.className = 'finding-item';
+    div.innerHTML = `
+      <div class="finding-sev ${sevClass[f.severity] || 'sev-medium'}">${icons[f.severity] || '⚠️'}</div>
+      <div>
+        <div class="finding-title">${f.type}</div>
+        <div class="finding-meta">${f.client} · ${f.date} · <span class="risk-badge risk-${f.severity}">${f.severity?.toUpperCase()}</span></div>
+      </div>
+    `;
+    list.appendChild(div);
+  });
+}
+
+// ─── Module commands modal ────────────────────────────────────────────────────
+function showModuleCmd(module) {
+  const data = MODULE_CMDS[module];
+  if (!data) return;
+  document.getElementById('cmd-modal-title').textContent = data.title;
+  document.getElementById('cmd-modal-desc').textContent = data.desc;
+  document.getElementById('cmd-modal-code').textContent = data.code;
+  document.getElementById('cmd-modal-overlay').classList.add('active');
+}
+
+function closeCmdModal(e) {
+  if (!e || e.target === document.getElementById('cmd-modal-overlay')) {
+    document.getElementById('cmd-modal-overlay').classList.remove('active');
+  }
+}
+
+function copyCmd() {
+  const code = document.getElementById('cmd-modal-code').textContent;
+  navigator.clipboard.writeText(code).then(() => showToast('Comandos copiados al portapapeles ✅'));
+}
+
+// ─── Toast ────────────────────────────────────────────────────────────────────
+function showToast(msg) {
+  const t = document.createElement('div');
+  t.style.cssText = 'position:fixed;bottom:24px;right:24px;background:#3a0a64;color:white;padding:12px 20px;border-radius:8px;font-size:0.85rem;z-index:9999;box-shadow:0 4px 16px rgba(0,0,0,0.3);transition:opacity 0.3s;';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => { t.style.opacity='0'; setTimeout(()=>t.remove(),300); }, 3000);
+}
+
+// ─── Keyboard shortcuts ───────────────────────────────────────────────────────
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { closeModal(); closeCmdModal(); }
+  if (e.key === 'n' && !e.target.matches('input,textarea,select')) openModal();
+});
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+renderAudits();
+renderFindings();
+</script>
+</body>
+</html>

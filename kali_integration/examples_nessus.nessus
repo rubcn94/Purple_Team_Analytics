@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NessusClientData_v2>
+  <Report name="Purple Team Vulnerability Assessment" xmlns:cm="http://www.nessus.org/cm">
+    <ReportHost name="192.168.1.100">
+      <HostProperties>
+        <tag name="operating-system">Linux Kernel 4.15 - 5.6</tag>
+        <tag name="host-ip">192.168.1.100</tag>
+        <tag name="host-fqdn">test-server.local</tag>
+        <tag name="scan-date">1711030200</tag>
+      </HostProperties>
+
+      <!-- CRITICAL: Default SSH Key Allowed -->
+      <ReportItem pluginID="70658" pluginName="SSH Version Detection" severity="0" pluginFamily="Service detection, ports, and general network stuff" port="22" protocol="tcp" svc_name="sshd">
+        <synopsis>SSH server version detection.</synopsis>
+        <description>It is possible to obtain information about the remote SSH server version. The version obtained helps to determine whether the remote host is vulnerable to known SSH attacks.</description>
+        <solution>None necessary - this is informational.</solution>
+        <cvss_base_score>5.3</cvss_base_score>
+        <cvss_temporal_score>5.0</cvss_temporal_score>
+        <cvss_base_vector>CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L</cvss_base_vector>
+        <plugin_type>remote</plugin_type>
+        <plugin_publication_date>2005/11/01</plugin_publication_date>
+        <plugin_modification_date>2022/05/04</plugin_modification_date>
+      </ReportItem>
+
+      <!-- HIGH: OpenSSL Information Disclosure -->
+      <ReportItem pluginID="105939" pluginName="OpenSSL: Multiple Vulnerabilities (CVE-2022-0778 - OpenSSL 1.1.1, 1.0.2)" severity="3" pluginFamily="General" port="443" protocol="tcp" svc_name="https">
+        <synopsis>The remote host is running a version of OpenSSL that is affected by multiple vulnerabilities.</synopsis>
+        <description>The remote host is running a version of OpenSSL that is affected by multiple vulnerabilities, including:
+          - Infinite loop in BN_mod_sqrt() (CVE-2022-0778)
+          This vulnerability may allow an attacker to trigger a denial of service condition on the remote host.</description>
+        <solution>Upgrade to OpenSSL 1.1.1n, 1.0.2v or later.</solution>
+        <cvss_base_score>7.5</cvss_base_score>
+        <cvss_temporal_score>7.2</cvss_temporal_score>
+        <cvss_base_vector>CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H</cvss_base_vector>
+        <cve>CVE-2022-0778</cve>
+        <plugin_type>remote</plugin_type>
+        <plugin_publication_date>2022/03/16</plugin_publication_date>
+        <plugin_modification_date>2022/04/14</plugin_modification_date>
+      </ReportItem>
+
+      <!-- HIGH: Unencrypted HTTP Service -->
+      <ReportItem pluginID="10662" pluginName="HTTP Server Detection" severity="2" pluginFamily="Web Servers" port="80" protocol="tcp" svc_name="http">
+        <synopsis>An HTTP service is running on the remote host.</synopsis>
+        <description>A web server is running on this port. This is for informational purposes only.</description>
+        <solution>Consider using HTTPS instead of HTTP for sensitive data transmission.</solution>
+        <cvss_base_score>5.8</cvss_base_score>
+        <cvss_temporal_score>5.2</cvss_temporal_score>
+        <cvss_base_vector>CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:L/I:N/A:N</cvss_base_vector>
+        <plugin_type>remote</plugin_type>
+        <plugin_publication_date>2000/06/01</plugin_publication_date>
+        <plugin_modification_date>2022/01/01</plugin_modification_date>
+      </ReportItem>
+
+      <!-- MEDIUM: MySQL Password Guessing -->
+      <ReportItem pluginID="10264" pluginName="MySQL Password Guessing" severity="2" pluginFamily="Databases" port="3306" protocol="tcp" svc_name="mysql">
+        <synopsis>An unprotected MySQL database service is running on the remote host.</synopsis>
+        <description>The remote MySQL server allows connections with the default 'root' account with an empty password. This allows an attacker to gain full control of the database server.</description>
+        <solution>Set a strong root password and restrict network access to the database service.</solution>
+        <cvss_base_score>6.9</cvss_base_score>
+        <cvss_temporal_score>6.3</cvss_temporal_score>
+        <cvss_base_vector>CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:L/A:L</cvss_base_vector>
+        <plugin_type>remote</plugin_type>
+        <plugin_publication_date>2003/04/08</plugin_publication_date>
+        <plugin_modification_date>2022/01/01</plugin_modification_date>
+      </ReportItem>
+
+      <!-- MEDIUM: SSL/TLS Certificate Issues -->
+      <ReportItem pluginID="51192" pluginName="SSL Certificate - Self Signed" severity="2" pluginFamily="General" port="443" protocol="tcp" svc_name="https">
+        <synopsis>The remote host is using a self-signed SSL certificate.</synopsis>
+        <description>The X.509 certificate presented by the remote host cannot be verified through any certificate authority. This may indicate that the certificate is self-signed or that the certificate chain is incomplete.</description>
+        <solution>Install a certificate issued by a valid certificate authority.</solution>
+        <cvss_base_score>5.9</cvss_base_score>
+        <cvss_temporal_score>5.3</cvss_temporal_score>
+        <cvss_base_vector>CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N</cvss_base_vector>
+        <plugin_type>remote</plugin_type>
+        <plugin_publication_date>2008/10/20</plugin_publication_date>
+        <plugin_modification_date>2022/01/01</plugin_modification_date>
+      </ReportItem>
+
+      <!-- LOW: Weak Apache Configuration -->
+      <ReportItem pluginID="10330" pluginName="Apache httpd Server Version" severity="1" pluginFamily="Web Servers" port="80" protocol="tcp" svc_name="http">
+        <synopsis>Apache httpd version detection.</synopsis>
+        <description>It is possible to obtain information about the remote Apache httpd server version. The version obtained helps to determine whether the remote host is vulnerable to known Apache attacks.</description>
+        <solution>Disable server version information in Apache configuration.</solution>
+        <cvss_base_score>3.7</cvss_base_score>
+        <cvss_temporal_score>3.2</cvss_temporal_score>
+        <cvss_base_vector>CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N</cvss_base_vector>
+        <plugin_type>remote</plugin_type>
+        <plugin_publication_date>2000/06/01</plugin_publication_date>
+        <plugin_modification_date>2022/01/01</plugin_modification_date>
+      </ReportItem>
+
+    </ReportHost>
+
+    <ReportHost name="192.168.1.101">
+      <HostProperties>
+        <tag name="operating-system">Windows Server 2019</tag>
+        <tag name="host-ip">192.168.1.101</tag>
+        <tag name="scan-date">1711030200</tag>
+      </HostProperties>
+
+      <!-- CRITICAL: SMB Null Session -->
+      <ReportItem pluginID="10396" pluginName="SMB Null Session Enabled" severity="4" pluginFamily="Windows" port="445" protocol="tcp" svc_name="smb">
+        <synopsis>A null session is available on the remote host.</synopsis>
+        <description>The remote SMB server allows a null session - that is, a connection to the server without providing any credentials. This allows an attacker to enumerate users, shares, and other information about the server.</description>
+        <solution>Configure the SMB server to require authentication for all sessions.</solution>
+        <cvss_base_score>9.1</cvss_base_score>
+        <cvss_temporal_score>8.7</cvss_temporal_score>
+        <cvss_base_vector>CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:N/A:L</cvss_base_vector>
+        <plugin_type>remote</plugin_type>
+        <plugin_publication_date>1999/01/01</plugin_publication_date>
+        <plugin_modification_date>2022/01/01</plugin_modification_date>
+      </ReportItem>
+
+    </ReportHost>
+
+  </Report>
+</NessusClientData_v2>
