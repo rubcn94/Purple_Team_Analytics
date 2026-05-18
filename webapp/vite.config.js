@@ -16,8 +16,8 @@ export default defineConfig({
         background_color: '#0a0a0f',
         display: 'standalone',
         orientation: 'any',
-        scope: '/purple_team_analytics/',
-        start_url: '/purple_team_analytics/',
+        scope: '/Purple_Team_Analytics/',
+        start_url: '/Purple_Team_Analytics/',
         lang: 'es',
         icons: [
           {
@@ -68,5 +68,5 @@ export default defineConfig({
       },
     }),
   ],
-  base: '/purple_team_analytics/',
+  base: '/Purple_Team_Analytics/',
 })
