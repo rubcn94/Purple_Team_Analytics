@@ -34,6 +34,7 @@ jobs:
 
       - name: Deploy to gh-pages
         run: |
+          touch webapp/dist/.nojekyll
           cd webapp/dist
           git init -b gh-pages
           git config user.name "github-actions[bot]"
