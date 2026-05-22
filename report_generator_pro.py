@@ -128,8 +128,7 @@ class ProfessionalReportGenerator:
         from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT, TA_JUSTIFY
         from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table,
                                          TableStyle, PageBreak, HRFlowable, KeepTogether)
-        from reportlab.platypus import Drawing
-        from reportlab.graphics.shapes import Rect, String, Circle, Line
+        from reportlab.graphics.shapes import Drawing, Rect, String, Circle, Line
         from reportlab.graphics.charts.piecharts import Pie
         from reportlab.graphics.charts.barcharts import VerticalBarChart
         from reportlab.lib import colors
