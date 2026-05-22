@@ -92,25 +92,71 @@ class ProfessionalReportGenerator:
                     content = json.load(fp)
                     module = f.stem.split('_')[0] if '_' in f.stem else f.stem
                     self.data[module] = content
-                    # Extraer hallazgos normalizados
-                    self._extract_findings(content, module)
+
+                    # results_full.json: hallazgos anidados en content["results"][modulo]
+                    if isinstance(content, dict) and "results" in content and isinstance(content["results"], dict):
+                        for mod_name, mod_data in content["results"].items():
+                            if isinstance(mod_data, dict):
+                                self.data[mod_name] = mod_data
+                                self._extract_findings(mod_data, mod_name)
+                    else:
+                        self._extract_findings(content, module)
             except Exception:
                 pass
+
+    def _infer_severity(self, text):
+        t = str(text).upper()
+        if any(k in t for k in ["CRÍTICO", "CRITICO", "CRITICAL"]):
+            return "critical"
+        if any(k in t for k in ["ALTO", "HIGH"]):
+            return "high"
+        if any(k in t for k in ["MEDIO", "MEDIUM", "WARN", "MODERADO"]):
+            return "medium"
+        if any(k in t for k in ["BAJO", "LOW", "INFO"]):
+            return "low"
+        return "info"
+
+    def _normalize_finding(self, item, module, key):
+        """Convierte cualquier formato de hallazgo a dict normalizado."""
+        if isinstance(item, dict):
+            # Blue Team format: {"module": ..., "finding": "texto"}
+            if "finding" in item and "title" not in item:
+                text = item["finding"]
+                item["title"] = text[:120]
+                item["description"] = text
+                if "severity" not in item:
+                    item["severity"] = self._infer_severity(text)
+            if "severity" not in item:
+                title = item.get("title", item.get("name", str(item)))
+                item["severity"] = self._infer_severity(title)
+            item.setdefault("_source_module", module)
+            item.setdefault("_source_key", key)
+            return item
+        elif isinstance(item, str) and item.strip():
+            return {
+                "title": item[:120],
+                "description": item,
+                "severity": self._infer_severity(item),
+                "_source_module": module,
+                "_source_key": key,
+            }
+        return None
 
     def _extract_findings(self, data, module):
         """Extrae hallazgos en formato normalizado."""
         finding_keys = [
             "findings", "vulnerabilities", "issues", "ioc_findings",
             "hardening_findings", "exposed_assets", "log_anomalies",
-            "network_anomalies", "email_breaches"
+            "network_anomalies", "email_breaches", "all_findings", "alerts",
         ]
         for key in finding_keys:
             items = data.get(key, [])
+            if not isinstance(items, list):
+                continue
             for item in items:
-                if isinstance(item, dict):
-                    item["_source_module"] = module
-                    item["_source_key"] = key
-                    self.all_findings.append(item)
+                normalized = self._normalize_finding(item, module, key)
+                if normalized:
+                    self.all_findings.append(normalized)
 
     def _severity_sort_key(self, f):
         order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
