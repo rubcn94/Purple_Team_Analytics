@@ -15,6 +15,7 @@
 """
 
 import os
+import re
 import sys
 import json
 import argparse
@@ -92,25 +93,116 @@ class ProfessionalReportGenerator:
                     content = json.load(fp)
                     module = f.stem.split('_')[0] if '_' in f.stem else f.stem
                     self.data[module] = content
-                    # Extraer hallazgos normalizados
-                    self._extract_findings(content, module)
+
+                    # results_full.json: hallazgos anidados en content["results"][modulo]
+                    if isinstance(content, dict) and "results" in content and isinstance(content["results"], dict):
+                        for mod_name, mod_data in content["results"].items():
+                            if isinstance(mod_data, dict):
+                                self.data[mod_name] = mod_data
+                                self._extract_findings(mod_data, mod_name)
+                    else:
+                        self._extract_findings(content, module)
             except Exception:
                 pass
+        self._deduplicate_findings()
+
+    def _strip_ansi(self, text):
+        return re.sub(r'\x1b\[[0-9;]*[mGKHF]', '', str(text))
+
+    def _is_junk_finding(self, text):
+        """Descarta fragmentos JSON y contadores que no son hallazgos reales."""
+        t = text.strip()
+        if re.match(r'^"[a-z_]+"\s*:\s*', t):
+            return True
+        if re.match(r'^(Summary|Total|Score|Risk):', t, re.IGNORECASE):
+            return True
+        return False
+
+    def _make_title(self, text, module):
+        """Extrae un título limpio del texto del hallazgo."""
+        clean = self._strip_ansi(text).strip()
+        # Formato scanner: [HIGH ] 200 0B text/html /wp-admin
+        m = re.search(r'\[(?:HIGH|MEDIUM|LOW|CRITICAL|INFO)\s*\]\s*\d+\s+\S+\s+\S+\s+(\S+)', clean)
+        if m:
+            path = m.group(1)
+            if module in ("directories", "analysis"):
+                return f"Ruta expuesta: {path}"
+            return path
+        return clean[:100]
+
+    def _infer_severity(self, text):
+        t = str(text).upper()
+        if any(k in t for k in ["CRÍTICO", "CRITICO", "CRITICAL"]):
+            return "critical"
+        if any(k in t for k in ["ALTO", "HIGH"]):
+            return "high"
+        if any(k in t for k in ["MEDIO", "MEDIUM", "WARN", "MODERADO"]):
+            return "medium"
+        if any(k in t for k in ["BAJO", "LOW", "INFO"]):
+            return "low"
+        return "info"
+
+    def _normalize_finding(self, item, module, key):
+        """Convierte cualquier formato de hallazgo a dict normalizado."""
+        if isinstance(item, dict):
+            # Blue Team format: {"module": ..., "finding": "texto"}
+            if "finding" in item and "title" not in item:
+                raw = item["finding"]
+                if self._is_junk_finding(self._strip_ansi(raw)):
+                    return None
+                clean = self._strip_ansi(raw)
+                item["title"] = self._make_title(raw, item.get("module", module))
+                item["description"] = clean
+                if "severity" not in item:
+                    item["severity"] = self._infer_severity(raw)
+            if "severity" not in item:
+                title = item.get("title", item.get("name", str(item)))
+                item["severity"] = self._infer_severity(title)
+            item.setdefault("_source_module", module)
+            item.setdefault("_source_key", key)
+            return item
+        elif isinstance(item, str) and item.strip():
+            raw = item
+            if self._is_junk_finding(self._strip_ansi(raw)):
+                return None
+            clean = self._strip_ansi(raw)
+            return {
+                "title": self._make_title(raw, module),
+                "description": clean,
+                "severity": self._infer_severity(raw),
+                "_source_module": module,
+                "_source_key": key,
+            }
+        return None
 
     def _extract_findings(self, data, module):
         """Extrae hallazgos en formato normalizado."""
+        # Evitar re-agregar all_findings del módulo analysis (ya vienen de los módulos individuales)
+        if module == "analysis":
+            return
         finding_keys = [
             "findings", "vulnerabilities", "issues", "ioc_findings",
             "hardening_findings", "exposed_assets", "log_anomalies",
-            "network_anomalies", "email_breaches"
+            "network_anomalies", "email_breaches", "all_findings", "alerts",
         ]
         for key in finding_keys:
             items = data.get(key, [])
+            if not isinstance(items, list):
+                continue
             for item in items:
-                if isinstance(item, dict):
-                    item["_source_module"] = module
-                    item["_source_key"] = key
-                    self.all_findings.append(item)
+                normalized = self._normalize_finding(item, module, key)
+                if normalized:
+                    self.all_findings.append(normalized)
+
+    def _deduplicate_findings(self):
+        seen = set()
+        deduped = []
+        for f in self.all_findings:
+            key = self._strip_ansi(f.get('description', f.get('title', str(f))))[:120]
+            if key not in seen:
+                seen.add(key)
+                deduped.append(f)
+        self.all_findings = deduped
 
     def _severity_sort_key(self, f):
         order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
@@ -118,23 +210,21 @@ class ProfessionalReportGenerator:
 
     # ──────────────────────────────────────────────────────────────────────────
     def generate(self, output_path=None):
-        """Genera el informe PDF completo."""
+        """Genera el informe PDF profesional."""
         if not check_reportlab():
             return None
 
         from reportlab.lib.pagesizes import A4
-        from reportlab.lib.units import cm, mm
+        from reportlab.lib.units import cm
         from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
         from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT, TA_JUSTIFY
         from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table,
-                                         TableStyle, PageBreak, HRFlowable, KeepTogether)
-        from reportlab.platypus import Drawing
-        from reportlab.graphics.shapes import Rect, String, Circle, Line
-        from reportlab.graphics.charts.piecharts import Pie
-        from reportlab.graphics.charts.barcharts import VerticalBarChart
+                                        TableStyle, PageBreak, HRFlowable, KeepTogether)
+        from reportlab.graphics.shapes import Drawing, Rect, String, Line, Circle
         from reportlab.lib import colors
 
-        # Output path
+        W, H = A4
+
         if output_path is None:
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             client_safe = self.client_name.replace(' ', '_').replace('/', '-')
@@ -146,540 +236,566 @@ class ProfessionalReportGenerator:
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Convertir colores a reportlab
         def rc(t): return colors.Color(t[0], t[1], t[2])
 
-        # Documento
+        C_PURPLE      = rc(self.PURPLE)
+        C_PURPLE_DARK = rc(self.PURPLE_DARK)
+        C_PURPLE_LIGHT= rc(self.PURPLE_LIGHT)
+        C_RED         = rc(self.RED_RISK)
+        C_ORANGE      = rc(self.ORANGE_RISK)
+        C_YELLOW      = rc(self.YELLOW_RISK)
+        C_GREEN       = rc(self.GREEN_OK)
+        C_WHITE       = rc(self.WHITE)
+        C_BLACK       = rc(self.BLACK)
+        C_DARK        = rc(self.DARK_TEXT)
+        C_GRAY_L      = rc(self.GRAY_LIGHT)
+        C_GRAY_M      = rc(self.GRAY_MID)
+        C_NAVY        = colors.HexColor('#1a1a2e')
+        C_ACCENT      = colors.HexColor('#f0f0f8')
+
+        SEV_COLORS = {
+            "critical": C_RED, "high": C_ORANGE,
+            "medium": C_YELLOW, "low": C_GREEN, "info": rc((0.27, 0.51, 0.78)),
+        }
+        SEV_LABELS = {"critical": "CRÍTICO", "high": "ALTO",
+                      "medium": "MEDIO", "low": "BAJO", "info": "INFO"}
+
+        ts_str = datetime.now().strftime("%d/%m/%Y")
+
+        # ── Footer en cada página ─────────────────────────────────────────────
+        company = self.company_name
+        client  = self.client_name
+
+        def page_footer(canvas, doc):
+            canvas.saveState()
+            canvas.setStrokeColor(C_PURPLE)
+            canvas.setLineWidth(0.8)
+            canvas.line(2*cm, 1.8*cm, W - 2*cm, 1.8*cm)
+            canvas.setFont('Helvetica', 7)
+            canvas.setFillColor(colors.HexColor('#666666'))
+            canvas.drawString(2*cm, 1.3*cm, f"{company}  ·  Informe confidencial  ·  {client}")
+            canvas.drawRightString(W - 2*cm, 1.3*cm, f"Página {doc.page}")
+            canvas.restoreState()
+
+        def cover_page(canvas, doc):
+            canvas.saveState()
+            canvas.setFillColor(C_NAVY)
+            canvas.rect(0, 0, W, H, fill=1, stroke=0)
+            canvas.setFillColor(C_PURPLE)
+            canvas.rect(0, H * 0.38, W, H * 0.62, fill=1, stroke=0)
+            canvas.setFillColor(colors.Color(1, 1, 1, alpha=0.04))
+            for i in range(0, int(W) + 60, 60):
+                canvas.setLineWidth(0.3)
+                canvas.setStrokeColor(colors.Color(1, 1, 1, alpha=0.06))
+                canvas.line(i, H * 0.38, i, H)
+            canvas.setFillColor(C_WHITE)
+            canvas.setFont('Helvetica-Bold', 32)
+            canvas.drawCentredString(W / 2, H * 0.72, "INFORME DE AUDITORÍA")
+            canvas.setFont('Helvetica-Bold', 24)
+            canvas.drawCentredString(W / 2, H * 0.66, "DE SEGURIDAD")
+            canvas.setFillColor(C_PURPLE_LIGHT)
+            canvas.setFont('Helvetica', 13)
+            canvas.drawCentredString(W / 2, H * 0.60, "Purple Team Security Assessment")
+            canvas.setFillColor(C_WHITE)
+            canvas.setFont('Helvetica', 10)
+            canvas.drawCentredString(W / 2, H * 0.54, ts_str)
+            canvas.setFillColor(colors.Color(1, 1, 1, alpha=0.12))
+            canvas.rect(1.5*cm, H * 0.10, W - 3*cm, H * 0.26, fill=1, stroke=0)
+            canvas.setFillColor(C_WHITE)
+            canvas.setFont('Helvetica-Bold', 10)
+            canvas.drawString(2.5*cm, H * 0.32, "Cliente:")
+            canvas.drawString(2.5*cm, H * 0.27, "Preparado por:")
+            canvas.drawString(2.5*cm, H * 0.22, "Clasificación:")
+            canvas.drawString(2.5*cm, H * 0.17, "Tipo de informe:")
+            canvas.setFont('Helvetica', 10)
+            canvas.drawString(6.5*cm, H * 0.32, client)
+            canvas.drawString(6.5*cm, H * 0.27, company)
+            canvas.drawString(6.5*cm, H * 0.22, "CONFIDENCIAL — USO INTERNO")
+            canvas.drawString(6.5*cm, H * 0.17, "Purple Team Full Assessment")
+            canvas.setFillColor(C_RED)
+            canvas.roundRect(W - 5.5*cm, H * 0.20, 3.8*cm, 0.7*cm, 4, fill=1, stroke=0)
+            canvas.setFillColor(C_WHITE)
+            canvas.setFont('Helvetica-Bold', 9)
+            canvas.drawCentredString(W - 3.6*cm, H * 0.225, "CONFIDENCIAL")
+            canvas.setFillColor(colors.HexColor('#888888'))
+            canvas.setFont('Helvetica', 7.5)
+            legal = ("Este documento contiene información confidencial de uso exclusivo para el destinatario. "
+                     "Queda prohibida su reproducción o divulgación sin autorización expresa.")
+            canvas.drawCentredString(W / 2, H * 0.055, legal)
+            canvas.restoreState()
+
         doc = SimpleDocTemplate(
-            str(output_path),
-            pagesize=A4,
+            str(output_path), pagesize=A4,
             rightMargin=2*cm, leftMargin=2*cm,
-            topMargin=2.5*cm, bottomMargin=2.5*cm,
+            topMargin=2.5*cm, bottomMargin=2.8*cm,
             title=f"Informe de Auditoría — {self.client_name}",
             author=self.company_name,
-            subject="Informe de Seguridad Purple Team"
         )
 
-        # Estilos
         styles = getSampleStyleSheet()
-        style_title = ParagraphStyle('Title2', parent=styles['Normal'],
-            fontSize=26, textColor=rc(self.WHITE), fontName='Helvetica-Bold',
-            alignment=TA_CENTER, spaceAfter=6)
-        style_subtitle = ParagraphStyle('Subtitle', parent=styles['Normal'],
-            fontSize=13, textColor=rc(self.PURPLE_LIGHT), fontName='Helvetica',
-            alignment=TA_CENTER, spaceAfter=4)
-        style_h1 = ParagraphStyle('H1', parent=styles['Normal'],
-            fontSize=16, textColor=rc(self.PURPLE_DARK), fontName='Helvetica-Bold',
-            spaceBefore=14, spaceAfter=8, borderPad=4)
-        style_h2 = ParagraphStyle('H2', parent=styles['Normal'],
-            fontSize=12, textColor=rc(self.PURPLE), fontName='Helvetica-Bold',
-            spaceBefore=10, spaceAfter=4)
-        style_body = ParagraphStyle('Body', parent=styles['Normal'],
-            fontSize=9.5, textColor=rc(self.DARK_TEXT), fontName='Helvetica',
-            leading=14, alignment=TA_JUSTIFY, spaceAfter=4)
-        style_small = ParagraphStyle('Small', parent=styles['Normal'],
-            fontSize=8, textColor=rc(self.DARK_TEXT), fontName='Helvetica', leading=12)
-        style_code = ParagraphStyle('Code', parent=styles['Normal'],
-            fontSize=8, fontName='Courier', backColor=rc(self.GRAY_LIGHT),
-            leftIndent=10, rightIndent=10, spaceBefore=4, spaceAfter=4)
-        style_note = ParagraphStyle('Note', parent=styles['Normal'],
-            fontSize=8.5, textColor=colors.HexColor('#555555'), fontName='Helvetica-Oblique',
-            leftIndent=10, spaceAfter=4)
+
+        def S(name, **kw):
+            base = kw.pop('parent', styles['Normal'])
+            return ParagraphStyle(name, parent=base, **kw)
+
+        sH1    = S('H1',    fontSize=17, fontName='Helvetica-Bold',
+                   textColor=C_NAVY, spaceBefore=16, spaceAfter=4)
+        sH2    = S('H2',    fontSize=11, fontName='Helvetica-Bold',
+                   textColor=C_PURPLE, spaceBefore=10, spaceAfter=4)
+        sBody  = S('Body',  fontSize=9.5, fontName='Helvetica',
+                   textColor=C_DARK, leading=15, alignment=TA_JUSTIFY, spaceAfter=4)
+        sSmall = S('Small', fontSize=8.5, fontName='Helvetica',
+                   textColor=C_DARK, leading=12)
+        sNote  = S('Note',  fontSize=8, fontName='Helvetica-Oblique',
+                   textColor=colors.HexColor('#555555'), spaceAfter=4)
+        sTocN  = S('TocN',  fontSize=10, fontName='Helvetica', textColor=C_DARK)
+        sTocNu = S('TocNu', fontSize=10, fontName='Helvetica-Bold', textColor=C_PURPLE)
+        sCover = S('Cover', fontSize=9, fontName='Helvetica', textColor=C_WHITE)
+
+        def section_header(title):
+            """Retorna lista de elementos para un encabezado de sección."""
+            header = Table([[Paragraph(title, sH1)]], colWidths=[17*cm])
+            header.setStyle(TableStyle([
+                ('LEFTPADDING',   (0,0), (-1,-1), 12),
+                ('TOPPADDING',    (0,0), (-1,-1), 8),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+                ('LINEBEFORE',    (0,0), (0,-1), 4, C_PURPLE),
+                ('BACKGROUND',    (0,0), (-1,-1), C_ACCENT),
+            ]))
+            return [header, Spacer(1, 0.3*cm)]
+
+        def bar_chart(values, labels, bar_colors):
+            """Gráfico de barras manual con colores y etiquetas correctas."""
+            d = Drawing(460, 170)
+            max_v = max(list(values) + [1])
+            bw, gap, base_y, start_x, ch = 68, 14, 28, 50, 120
+            for i, (v, c, l) in enumerate(zip(values, bar_colors, labels)):
+                x = start_x + i * (bw + gap)
+                bh = max(2, int(v / max_v * ch)) if v > 0 else 0
+                d.add(Rect(x, base_y, bw, bh, fillColor=c, strokeColor=None))
+                d.add(Rect(x, base_y, bw, min(bh, 4), fillColor=colors.Color(0,0,0,0.15), strokeColor=None))
+                d.add(String(x + bw/2, base_y - 14, l,
+                             textAnchor='middle', fontSize=8.5, fontName='Helvetica',
+                             fillColor=colors.HexColor('#333333')))
+                if v > 0:
+                    d.add(String(x + bw/2, base_y + bh + 4, str(v),
+                                 textAnchor='middle', fontSize=9, fontName='Helvetica-Bold',
+                                 fillColor=colors.HexColor('#333333')))
+            ticks = 5
+            for t in range(ticks + 1):
+                y = base_y + t / ticks * ch
+                val = int(max_v * t / ticks)
+                d.add(String(start_x - 6, y - 3, str(val),
+                             textAnchor='end', fontSize=7, fontName='Helvetica',
+                             fillColor=colors.HexColor('#888888')))
+                d.add(Line(start_x - 3, y, start_x + len(values) * (bw + gap) - gap, y,
+                           strokeColor=colors.Color(0.85, 0.85, 0.85), strokeWidth=0.5))
+            d.add(Line(start_x - 3, base_y,
+                       start_x + len(values) * (bw + gap) - gap, base_y,
+                       strokeColor=colors.HexColor('#999999'), strokeWidth=1))
+            return d
 
         story = []
 
-        # ── PORTADA ───────────────────────────────────────────────────────────
-        # Bloque de portada con fondo púrpura usando tabla
-        cover_data = [[
-            Paragraph(f"INFORME DE AUDITORÍA<br/>DE SEGURIDAD", style_title),
-        ]]
-        cover_table = Table(cover_data, colWidths=[17*cm])
-        cover_table.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,-1), rc(self.PURPLE)),
-            ('TOPPADDING', (0,0), (-1,-1), 30),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 30),
-            ('LEFTPADDING', (0,0), (-1,-1), 20),
-            ('RIGHTPADDING', (0,0), (-1,-1), 20),
-            ('ROUNDEDCORNERS', (0,0), (-1,-1), [6,6,6,6]),
-        ]))
-        story.append(cover_table)
-        story.append(Spacer(1, 0.5*cm))
-
-        # Info de portada
-        ts_str = datetime.now().strftime("%d de %B de %Y")
-        meta_data = [
-            ["Cliente:", self.client_name],
-            ["Preparado por:", self.company_name],
-            ["Fecha:", ts_str],
-            ["Clasificación:", "CONFIDENCIAL — USO INTERNO"],
-            ["Tipo de informe:", self.report_type.upper()],
-        ]
-        meta_table = Table(meta_data, colWidths=[5*cm, 12*cm])
-        meta_table.setStyle(TableStyle([
-            ('FONTNAME', (0,0), (0,-1), 'Helvetica-Bold'),
-            ('FONTNAME', (1,0), (1,-1), 'Helvetica'),
-            ('FONTSIZE', (0,0), (-1,-1), 10),
-            ('TEXTCOLOR', (0,0), (0,-1), rc(self.PURPLE)),
-            ('TEXTCOLOR', (1,0), (1,-1), rc(self.DARK_TEXT)),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
-            ('TOPPADDING', (0,0), (-1,-1), 6),
-            ('LINEBELOW', (0,0), (-1,-2), 0.5, rc(self.GRAY_MID)),
-        ]))
-        story.append(meta_table)
-
-        # Aviso legal
-        story.append(Spacer(1, 0.5*cm))
-        legal_text = (
-            "Este documento contiene información confidencial y está destinado exclusivamente "
-            "al cliente indicado. Queda prohibida su reproducción, distribución o divulgación "
-            "a terceros sin autorización expresa de {company}. "
-            "La información aquí contenida ha sido obtenida en el contexto de una auditoría "
-            "de seguridad autorizada.".format(company=self.company_name)
-        )
-        story.append(Paragraph(legal_text, style_note))
+        # ── PORTADA (dibujada por cover_page callback) ────────────────────────
+        story.append(Spacer(1, 0.1))
         story.append(PageBreak())
 
         # ── ÍNDICE ────────────────────────────────────────────────────────────
-        story.append(Paragraph("ÍNDICE DE CONTENIDOS", style_h1))
-        story.append(HRFlowable(width="100%", thickness=2, color=rc(self.PURPLE), spaceAfter=8))
+        story += section_header("ÍNDICE DE CONTENIDOS")
         toc_items = [
-            ("1.", "Resumen Ejecutivo"),
-            ("2.", "Metodología y Alcance"),
-            ("3.", "Métricas de Riesgo"),
-            ("4.", "Hallazgos por Módulo"),
-            ("5.", "Análisis de Compliance"),
-            ("6.", "Plan de Remediación Priorizado"),
-            ("7.", "Conclusiones y Siguientes Pasos"),
+            ("1", "Resumen Ejecutivo"),
+            ("2", "Metodología y Alcance"),
+            ("3", "Métricas de Riesgo"),
+            ("4", "Hallazgos Identificados"),
+            ("5", "Análisis de Compliance"),
+            ("6", "Plan de Remediación"),
+            ("7", "Conclusiones y Siguientes Pasos"),
         ]
-        for num, title in toc_items:
-            toc_row = [[Paragraph(num, style_small), Paragraph(title, style_small)]]
-            toc_table = Table(toc_row, colWidths=[1*cm, 16*cm])
-            toc_table.setStyle(TableStyle([
-                ('FONTNAME', (0,0), (0,0), 'Helvetica-Bold'),
-                ('TEXTCOLOR', (0,0), (0,0), rc(self.PURPLE)),
-                ('BOTTOMPADDING', (0,0), (-1,-1), 5),
-                ('TOPPADDING', (0,0), (-1,-1), 5),
-            ]))
-            story.append(toc_table)
+        toc_data = [[Paragraph(n, sTocNu), Paragraph(t, sTocN)] for n, t in toc_items]
+        toc_table = Table(toc_data, colWidths=[1*cm, 16*cm])
+        toc_table.setStyle(TableStyle([
+            ('TOPPADDING',    (0,0), (-1,-1), 7),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 7),
+            ('LINEBELOW',     (0,0), (-1,-2), 0.4, C_GRAY_M),
+            ('LEFTPADDING',   (0,0), (-1,-1), 4),
+        ]))
+        story.append(toc_table)
         story.append(PageBreak())
 
         # ── 1. RESUMEN EJECUTIVO ──────────────────────────────────────────────
-        story.append(Paragraph("1. RESUMEN EJECUTIVO", style_h1))
-        story.append(HRFlowable(width="100%", thickness=2, color=rc(self.PURPLE), spaceAfter=8))
+        story += section_header("1.  RESUMEN EJECUTIVO")
 
-        # Contar hallazgos por severidad
         sev_counter = Counter(f.get("severity", "info") for f in self.all_findings)
         critical_n = sev_counter.get("critical", 0)
-        high_n = sev_counter.get("high", 0)
-        medium_n = sev_counter.get("medium", 0)
-        low_n = sev_counter.get("low", 0)
-        total_n = len(self.all_findings)
+        high_n     = sev_counter.get("high", 0)
+        medium_n   = sev_counter.get("medium", 0)
+        low_n      = sev_counter.get("low", 0)
+        total_n    = len(self.all_findings)
 
-        # Determinar nivel de riesgo global
         if critical_n > 0:
-            risk_level = "CRÍTICO"; risk_color = rc(self.RED_RISK)
+            risk_level = "CRÍTICO"; risk_color = C_RED
         elif high_n > 2:
-            risk_level = "ALTO"; risk_color = rc(self.ORANGE_RISK)
+            risk_level = "ALTO";    risk_color = C_ORANGE
         elif high_n > 0 or medium_n > 3:
-            risk_level = "MEDIO"; risk_color = rc(self.YELLOW_RISK)
+            risk_level = "MEDIO";   risk_color = C_YELLOW
         else:
-            risk_level = "BAJO"; risk_color = rc(self.GREEN_OK)
+            risk_level = "BAJO";    risk_color = C_GREEN
 
-        exec_text = (
-            "Se ha realizado una auditoría de seguridad de tipo Purple Team para <b>{client}</b>, "
-            "abarcando análisis de superficie de ataque externo, evaluación de controles defensivos, "
-            "análisis de compliance normativo y pruebas de seguridad WiFi. "
-            "La auditoría ha identificado un total de <b>{total} hallazgos</b>, "
-            "con un nivel de riesgo global <b>{level}</b>."
-        ).format(client=self.client_name, total=total_n, level=risk_level)
-        story.append(Paragraph(exec_text, style_body))
-        story.append(Spacer(1, 0.3*cm))
+        story.append(Paragraph(
+            f"Se ha realizado una auditoría de seguridad <b>Purple Team</b> para "
+            f"<b>{self.client_name}</b>, abarcando reconocimiento externo, análisis de "
+            f"vulnerabilidades, evaluación de controles defensivos y compliance normativo. "
+            f"Se han identificado <b>{total_n} hallazgos</b> con nivel de riesgo global "
+            f"<b>{risk_level}</b>.", sBody))
+        story.append(Spacer(1, 0.4*cm))
 
-        # Tabla de métricas ejecutivas
-        metrics_data = [
-            ["Hallazgos Críticos", "Hallazgos Altos", "Hallazgos Medios", "Hallazgos Bajos"],
-            [str(critical_n), str(high_n), str(medium_n), str(low_n)],
-        ]
-        metrics_table = Table(metrics_data, colWidths=[4.25*cm]*4)
-        sev_bg_colors = [rc(self.RED_RISK), rc(self.ORANGE_RISK), rc(self.YELLOW_RISK), rc(self.GREEN_OK)]
-        metrics_style = TableStyle([
-            ('FONTNAME',    (0,0), (-1,0), 'Helvetica-Bold'),
-            ('FONTNAME',    (0,1), (-1,1), 'Helvetica-Bold'),
-            ('FONTSIZE',    (0,0), (-1,0), 8.5),
-            ('FONTSIZE',    (0,1), (-1,1), 22),
-            ('ALIGN',       (0,0), (-1,-1), 'CENTER'),
-            ('VALIGN',      (0,0), (-1,-1), 'MIDDLE'),
-            ('TOPPADDING',  (0,0), (-1,0), 8),
-            ('BOTTOMPADDING', (0,0), (-1,0), 6),
-            ('TOPPADDING',  (0,1), (-1,1), 8),
-            ('BOTTOMPADDING', (0,1), (-1,1), 12),
-            ('ROUNDEDCORNERS', (0,0), (-1,-1), [4,4,4,4]),
-        ])
-        for i, bg in enumerate(sev_bg_colors):
-            metrics_style.add('BACKGROUND', (i,0), (i,-1), bg)
-            metrics_style.add('TEXTCOLOR', (i,0), (i,-1), rc(self.WHITE))
-        metrics_table.setStyle(metrics_style)
-        story.append(metrics_table)
-        story.append(Spacer(1, 0.5*cm))
-
-        # Riesgo global badge
-        risk_badge_data = [[Paragraph(f"NIVEL DE RIESGO GLOBAL: {risk_level}", ParagraphStyle(
-            'RiskBadge', parent=styles['Normal'],
-            fontSize=14, fontName='Helvetica-Bold',
-            textColor=rc(self.WHITE), alignment=TA_CENTER))]]
-        risk_table = Table(risk_badge_data, colWidths=[17*cm])
-        risk_table.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,-1), risk_color),
-            ('TOPPADDING', (0,0), (-1,-1), 12),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 12),
-            ('ROUNDEDCORNERS', (0,0), (-1,-1), [6,6,6,6]),
+        # KPI cards
+        kpi_labels = ["CRÍTICO", "ALTO", "MEDIO", "BAJO"]
+        kpi_vals   = [critical_n, high_n, medium_n, low_n]
+        kpi_colors = [C_RED, C_ORANGE, C_YELLOW, C_GREEN]
+        kpi_cells  = []
+        for lbl, val, col in zip(kpi_labels, kpi_vals, kpi_colors):
+            cell = Table([
+                [Paragraph(lbl, S('kL', fontSize=8, fontName='Helvetica-Bold',
+                                  textColor=C_WHITE, alignment=TA_CENTER))],
+                [Paragraph(str(val), S('kV', fontSize=28, fontName='Helvetica-Bold',
+                                       textColor=C_WHITE, alignment=TA_CENTER))],
+            ], colWidths=[4.0*cm])
+            cell.setStyle(TableStyle([
+                ('BACKGROUND',    (0,0), (-1,-1), col),
+                ('TOPPADDING',    (0,0), (-1,0),  10),
+                ('BOTTOMPADDING', (0,1), (-1,-1), 12),
+                ('TOPPADDING',    (0,1), (-1,-1), 4),
+            ]))
+            kpi_cells.append(cell)
+        kpi_row = Table([kpi_cells], colWidths=[4.0*cm]*4,
+                        hAlign='CENTER', rowHeights=[None])
+        kpi_row.setStyle(TableStyle([
+            ('LEFTPADDING',  (0,0), (-1,-1), 4),
+            ('RIGHTPADDING', (0,0), (-1,-1), 4),
         ]))
-        story.append(risk_table)
+        story.append(kpi_row)
+        story.append(Spacer(1, 0.4*cm))
+
+        # Risk badge
+        badge = Table([[Paragraph(f"▶  NIVEL DE RIESGO GLOBAL:  {risk_level}",
+                                  S('RB', fontSize=13, fontName='Helvetica-Bold',
+                                    textColor=C_WHITE, alignment=TA_CENTER))]],
+                      colWidths=[17*cm])
+        badge.setStyle(TableStyle([
+            ('BACKGROUND',    (0,0), (-1,-1), risk_color),
+            ('TOPPADDING',    (0,0), (-1,-1), 11),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 11),
+        ]))
+        story.append(badge)
         story.append(PageBreak())
 
         # ── 2. METODOLOGÍA ────────────────────────────────────────────────────
-        story.append(Paragraph("2. METODOLOGÍA Y ALCANCE", style_h1))
-        story.append(HRFlowable(width="100%", thickness=2, color=rc(self.PURPLE), spaceAfter=8))
-
-        methodology_text = (
-            "La auditoría se ha realizado siguiendo el framework <b>MITRE ATT&CK</b> para la "
-            "fase ofensiva y los controles del <b>CIS Benchmark</b> y <b>NIST CSF</b> para la fase "
-            "defensiva. El proceso sigue las 7 fases de la Metodología Purple Team:"
-        )
-        story.append(Paragraph(methodology_text, style_body))
-        story.append(Spacer(1, 0.3*cm))
+        story += section_header("2.  METODOLOGÍA Y ALCANCE")
+        story.append(Paragraph(
+            "La auditoría sigue el framework <b>MITRE ATT&CK</b> para la fase ofensiva y los "
+            "controles <b>CIS Benchmark</b> / <b>NIST CSF</b> para la fase defensiva, "
+            "estructurada en 7 fases:", sBody))
+        story.append(Spacer(1, 0.25*cm))
 
         phases = [
-            ("Fase 1", "Reconocimiento Pasivo (OSINT)", "Recolección de inteligencia en fuentes abiertas sin contacto directo con el objetivo."),
-            ("Fase 2", "Reconocimiento Activo", "Enumeración de servicios, puertos y tecnologías expuestas."),
-            ("Fase 3", "Análisis de Vulnerabilidades", "Identificación de CVEs, configuraciones inseguras y debilidades de seguridad."),
-            ("Fase 4", "Evaluación de Controles Defensivos", "Verificación de hardening, logs, detección de intrusiones y respuesta."),
-            ("Fase 5", "Evaluación de Compliance", "Análisis de cumplimiento normativo (RGPD, ENS, PCI DSS)."),
-            ("Fase 6", "Análisis WiFi", "Evaluación de la seguridad de la red inalámbrica y dispositivos conectados."),
-            ("Fase 7", "Reporting y Remediación", "Generación de informe con hallazgos priorizados y plan de acción."),
+            ("1", "Reconocimiento Pasivo (OSINT)", "Inteligencia en fuentes abiertas sin contacto con el objetivo."),
+            ("2", "Reconocimiento Activo",          "Enumeración de servicios, puertos y tecnologías expuestas."),
+            ("3", "Análisis de Vulnerabilidades",   "Identificación de CVEs, configuraciones inseguras y debilidades."),
+            ("4", "Evaluación Defensiva",            "Verificación de hardening, logs y capacidades de detección."),
+            ("5", "Evaluación de Compliance",        "Análisis de cumplimiento normativo: RGPD, ENS, PCI DSS."),
+            ("6", "Análisis WiFi",                   "Evaluación de seguridad de la red inalámbrica."),
+            ("7", "Reporting y Remediación",         "Informe con hallazgos priorizados y plan de acción."),
         ]
-        phases_data = [["Fase", "Nombre", "Descripción"]] + phases
-        phases_table = Table(phases_data, colWidths=[1.8*cm, 4.5*cm, 10.7*cm])
-        phases_style = TableStyle([
-            ('BACKGROUND', (0,0), (-1,0), rc(self.PURPLE)),
-            ('TEXTCOLOR', (0,0), (-1,0), rc(self.WHITE)),
-            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0,0), (-1,-1), 8.5),
-            ('FONTNAME', (0,1), (0,-1), 'Helvetica-Bold'),
-            ('TEXTCOLOR', (0,1), (0,-1), rc(self.PURPLE)),
-            ('ROWBACKGROUNDS', (0,1), (-1,-1), [rc(self.WHITE), rc(self.GRAY_LIGHT)]),
-            ('GRID', (0,0), (-1,-1), 0.5, rc(self.GRAY_MID)),
-            ('ALIGN', (0,0), (-1,-1), 'LEFT'),
-            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-            ('TOPPADDING', (0,0), (-1,-1), 6),
+        ph_data = [
+            [Paragraph("<b>Fase</b>", sSmall),
+             Paragraph("<b>Nombre</b>", sSmall),
+             Paragraph("<b>Descripción</b>", sSmall)]
+        ] + [[Paragraph(n, S('PN', fontSize=8.5, fontName='Helvetica-Bold', textColor=C_PURPLE)),
+              Paragraph(t, S('PT', fontSize=8.5, fontName='Helvetica-Bold', textColor=C_DARK)),
+              Paragraph(d, sSmall)] for n, t, d in phases]
+        ph_table = Table(ph_data, colWidths=[1.4*cm, 5*cm, 10.6*cm])
+        ph_table.setStyle(TableStyle([
+            ('BACKGROUND',    (0,0), (-1,0),  C_NAVY),
+            ('TEXTCOLOR',     (0,0), (-1,0),  C_WHITE),
+            ('FONTNAME',      (0,0), (-1,0),  'Helvetica-Bold'),
+            ('FONTSIZE',      (0,0), (-1,0),  8.5),
+            ('ROWBACKGROUNDS',(0,1), (-1,-1), [C_WHITE, C_ACCENT]),
+            ('LINEBELOW',     (0,0), (-1,-1), 0.4, C_GRAY_M),
+            ('TOPPADDING',    (0,0), (-1,-1), 6),
             ('BOTTOMPADDING', (0,0), (-1,-1), 6),
-            ('LEFTPADDING', (0,0), (-1,-1), 8),
-        ])
-        phases_table.setStyle(phases_style)
-        story.append(phases_table)
+            ('LEFTPADDING',   (0,0), (-1,-1), 8),
+            ('VALIGN',        (0,0), (-1,-1), 'MIDDLE'),
+        ]))
+        story.append(ph_table)
         story.append(PageBreak())
 
         # ── 3. MÉTRICAS DE RIESGO ─────────────────────────────────────────────
-        story.append(Paragraph("3. MÉTRICAS DE RIESGO", style_h1))
-        story.append(HRFlowable(width="100%", thickness=2, color=rc(self.PURPLE), spaceAfter=8))
+        story += section_header("3.  MÉTRICAS DE RIESGO")
+        story.append(Paragraph("Distribución de hallazgos por nivel de severidad:", sH2))
+        story.append(Spacer(1, 0.2*cm))
 
-        if self.all_findings:
-            # Gráfico de barras por severidad
-            from reportlab.graphics.shapes import Drawing
-            from reportlab.graphics.charts.barcharts import VerticalBarChart
-            from reportlab.graphics import renderPDF
+        chart = bar_chart(
+            [critical_n, high_n, medium_n, low_n],
+            ["Crítico", "Alto", "Medio", "Bajo"],
+            [C_RED, C_ORANGE, C_YELLOW, C_GREEN]
+        )
+        story.append(chart)
+        story.append(Spacer(1, 0.4*cm))
 
-            d = Drawing(400, 180)
-            bc = VerticalBarChart()
-            bc.x = 40; bc.y = 20; bc.height = 140; bc.width = 340
-            sev_labels = ['Crítico', 'Alto', 'Medio', 'Bajo']
-            sev_values = [critical_n, high_n, medium_n, low_n]
-            bc.data = [sev_values]
-            bc.categoryAxis.categoryNames = sev_labels
-            bc.bars[0].fillColor = rc(self.PURPLE)
-            bc.valueAxis.valueMin = 0
-            bc.valueAxis.valueMax = max(sev_values) + 1 if sev_values else 5
-            bc.valueAxis.valueStep = max(1, (max(sev_values) + 1) // 5) if sev_values else 1
-            bc.groupSpacing = 10
-            bc.barSpacing = 2
-            # Colores por barra
-            bc.bars[0].fillColor = rc(self.RED_RISK)
-            bc.data = [[critical_n], [high_n], [medium_n], [low_n]]
-            bc.bars[0].fillColor = rc(self.RED_RISK)
-            bc.bars[1].fillColor = rc(self.ORANGE_RISK)
-            bc.bars[2].fillColor = rc(self.YELLOW_RISK)
-            bc.bars[3].fillColor = rc(self.GREEN_OK)
-            bc.categoryAxis.categoryNames = ['Crítico', 'Alto', 'Medio', 'Bajo']
-            bc.barWidth = 40
-            bc.groupSpacing = 15
-            d.add(bc)
+        # Tabla resumen de módulos
+        mod_map = {"subdomain": "Subdominios", "ssl": "SSL/TLS",
+                   "http": "HTTP Security", "directories": "Dir. Scanner", "cve": "CVE Correlator"}
+        mod_rows = []
+        sev_by_mod = {}
+        for f in self.all_findings:
+            m = f.get("module", f.get("_source_module", "other"))
+            s = f.get("severity", "info")
+            sev_by_mod.setdefault(m, Counter())[s] += 1
 
-            story.append(Paragraph("Distribución de Hallazgos por Severidad", style_h2))
-            story.append(d)
-            story.append(Spacer(1, 0.5*cm))
+        for mod, counts in sorted(sev_by_mod.items()):
+            label = mod_map.get(mod, mod.replace('_', ' ').title())
+            total = sum(counts.values())
+            worst = next((s for s in ("critical","high","medium","low","info") if counts.get(s,0) > 0), "info")
+            mod_rows.append([
+                Paragraph(label, sSmall),
+                Paragraph(str(counts.get("critical",0)), S('MC', fontSize=8.5, fontName='Helvetica-Bold', textColor=C_RED, alignment=TA_CENTER)),
+                Paragraph(str(counts.get("high",0)),     S('MH', fontSize=8.5, fontName='Helvetica-Bold', textColor=C_ORANGE, alignment=TA_CENTER)),
+                Paragraph(str(counts.get("medium",0)),   S('MM', fontSize=8.5, fontName='Helvetica-Bold', textColor=colors.HexColor('#b8860b'), alignment=TA_CENTER)),
+                Paragraph(str(counts.get("low",0)),      S('ML2', fontSize=8.5, fontName='Helvetica-Bold', textColor=C_GREEN, alignment=TA_CENTER)),
+                Paragraph(str(total), S('MT', fontSize=8.5, fontName='Helvetica-Bold', alignment=TA_CENTER)),
+            ])
 
-        # Tabla de módulos evaluados
-        module_scores = []
-        for module, data in self.data.items():
-            score = data.get("defense_score") or data.get("hardening_score") or \
-                    data.get("risk_score") or data.get("overall_compliance")
-            if score is not None:
-                module_scores.append((module.replace('_', ' ').title(), score))
-
-        if module_scores:
-            story.append(Paragraph("Puntuaciones por Módulo", style_h2))
-            score_data = [["Módulo", "Puntuación", "Estado"]]
-            for module, score in module_scores:
-                if score >= 80: status = "✓ Bien"
-                elif score >= 60: status = "~ Mejorable"
-                else: status = "✗ Deficiente"
-                score_data.append([module, f"{score}/100", status])
-
-            score_table = Table(score_data, colWidths=[8*cm, 4*cm, 5*cm])
-            score_table.setStyle(TableStyle([
-                ('BACKGROUND', (0,0), (-1,0), rc(self.PURPLE)),
-                ('TEXTCOLOR', (0,0), (-1,0), rc(self.WHITE)),
-                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0,0), (-1,-1), 9),
-                ('ROWBACKGROUNDS', (0,1), (-1,-1), [rc(self.WHITE), rc(self.GRAY_LIGHT)]),
-                ('GRID', (0,0), (-1,-1), 0.5, rc(self.GRAY_MID)),
-                ('ALIGN', (1,0), (-1,-1), 'CENTER'),
-                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-                ('TOPPADDING', (0,0), (-1,-1), 7),
-                ('BOTTOMPADDING', (0,0), (-1,-1), 7),
-                ('LEFTPADDING', (0,0), (-1,-1), 10),
+        if mod_rows:
+            story.append(Paragraph("Hallazgos por módulo:", sH2))
+            hdr = [Paragraph(h, S('TH', fontSize=8, fontName='Helvetica-Bold', textColor=C_WHITE, alignment=TA_CENTER))
+                   for h in ["Módulo", "Crítico", "Alto", "Medio", "Bajo", "Total"]]
+            mod_table = Table([hdr] + mod_rows, colWidths=[6*cm, 2.2*cm, 2.2*cm, 2.2*cm, 2.2*cm, 2.2*cm])
+            mod_table.setStyle(TableStyle([
+                ('BACKGROUND',    (0,0), (-1,0),  C_NAVY),
+                ('ROWBACKGROUNDS',(0,1), (-1,-1), [C_WHITE, C_ACCENT]),
+                ('LINEBELOW',     (0,0), (-1,-1), 0.4, C_GRAY_M),
+                ('TOPPADDING',    (0,0), (-1,-1), 6),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+                ('LEFTPADDING',   (0,0), (0,-1),  10),
+                ('VALIGN',        (0,0), (-1,-1), 'MIDDLE'),
             ]))
-            story.append(score_table)
+            story.append(mod_table)
         story.append(PageBreak())
 
         # ── 4. HALLAZGOS ─────────────────────────────────────────────────────
-        story.append(Paragraph("4. HALLAZGOS POR SEVERIDAD", style_h1))
-        story.append(HRFlowable(width="100%", thickness=2, color=rc(self.PURPLE), spaceAfter=8))
-
+        story += section_header("4.  HALLAZGOS IDENTIFICADOS")
         sorted_findings = sorted(self.all_findings, key=self._severity_sort_key)
 
         if not sorted_findings:
-            story.append(Paragraph("No se encontraron hallazgos significativos en esta auditoría.", style_body))
+            story.append(Paragraph("No se encontraron hallazgos significativos.", sBody))
         else:
-            for i, finding in enumerate(sorted_findings[:50], 1):  # Max 50 findings
+            current_sev = None
+            for i, finding in enumerate(sorted_findings[:60], 1):
                 sev = finding.get("severity", "info")
-                sev_color = rc(self.SEVERITY_COLORS.get(sev, (0.5, 0.5, 0.5)))
-                finding_type = finding.get("type", finding.get("check", "hallazgo")).replace('_', ' ').title()
-                detail = finding.get("detail", finding.get("description", ""))
-                remediation = finding.get("remediation", "")
-                source = finding.get("_source_module", "")
 
-                # Header del hallazgo
-                finding_header = [[
-                    Paragraph(f"{i:02d}. {finding_type}", ParagraphStyle(
-                        'FH', parent=styles['Normal'],
-                        fontSize=9.5, fontName='Helvetica-Bold', textColor=rc(self.WHITE))),
-                    Paragraph(sev.upper(), ParagraphStyle(
-                        'FS', parent=styles['Normal'],
-                        fontSize=9, fontName='Helvetica-Bold', textColor=rc(self.WHITE),
-                        alignment=TA_RIGHT)),
-                ]]
-                header_table = Table(finding_header, colWidths=[13*cm, 4*cm])
-                header_table.setStyle(TableStyle([
-                    ('BACKGROUND', (0,0), (-1,-1), sev_color),
-                    ('TOPPADDING', (0,0), (-1,-1), 6),
-                    ('BOTTOMPADDING', (0,0), (-1,-1), 6),
-                    ('LEFTPADDING', (0,0), (0,-1), 10),
-                    ('RIGHTPADDING', (-1,0), (-1,-1), 10),
+                # Separador de grupo por severidad
+                if sev != current_sev:
+                    current_sev = sev
+                    sev_c = SEV_COLORS.get(sev, C_GRAY_M)
+                    sev_lbl = SEV_LABELS.get(sev, sev.upper())
+                    grp = Table([[Paragraph(f"  {sev_lbl}", S('GL', fontSize=9,
+                                  fontName='Helvetica-Bold', textColor=C_WHITE))]],
+                                colWidths=[17*cm])
+                    grp.setStyle(TableStyle([
+                        ('BACKGROUND',    (0,0), (-1,-1), sev_c),
+                        ('TOPPADDING',    (0,0), (-1,-1), 5),
+                        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+                    ]))
+                    story.append(Spacer(1, 0.2*cm))
+                    story.append(grp)
+                    story.append(Spacer(1, 0.1*cm))
+
+                title   = self._strip_ansi(str(finding.get("title") or finding.get("type", "Hallazgo")))[:90]
+                detail  = self._strip_ansi(str(finding.get("description", "")))[:350]
+                source  = finding.get("module", finding.get("_source_module", ""))
+
+                # Card: borde lateral + contenido blanco
+                sev_c = SEV_COLORS.get(sev, C_GRAY_M)
+                content_rows = [
+                    [Paragraph(f"{i:02d}.  {title}",
+                               S('FT', fontSize=9.5, fontName='Helvetica-Bold', textColor=C_DARK))]
+                ]
+                if detail and detail != title:
+                    content_rows.append([Paragraph(detail, S('FD', fontSize=8.5,
+                                         fontName='Helvetica', textColor=colors.HexColor('#444444'),
+                                         leading=12))])
+                if source:
+                    content_rows.append([Paragraph(
+                        f"Módulo: {source.title()}",
+                        S('FS2', fontSize=7.5, fontName='Helvetica-Oblique',
+                          textColor=colors.HexColor('#888888')))])
+
+                content = Table(content_rows, colWidths=[15.6*cm])
+                content.setStyle(TableStyle([
+                    ('TOPPADDING',    (0,0), (-1,-1), 4),
+                    ('BOTTOMPADDING', (0,0), (-1,-1), 3),
+                    ('LEFTPADDING',   (0,0), (-1,-1), 8),
+                    ('BACKGROUND',    (0,0), (-1,-1), C_WHITE),
                 ]))
 
-                # Detalle del hallazgo
-                detail_rows = []
-                if detail:
-                    detail_rows.append([Paragraph("Descripción:", ParagraphStyle(
-                        'DL', parent=styles['Normal'], fontSize=8.5, fontName='Helvetica-Bold',
-                        textColor=rc(self.PURPLE))),
-                        Paragraph(str(detail)[:300], style_small)])
-                if remediation:
-                    detail_rows.append([Paragraph("Remediación:", ParagraphStyle(
-                        'RL', parent=styles['Normal'], fontSize=8.5, fontName='Helvetica-Bold',
-                        textColor=rc(self.GREEN_OK))),
-                        Paragraph(str(remediation)[:300], style_small)])
-                if source:
-                    detail_rows.append([Paragraph("Módulo:", ParagraphStyle(
-                        'ML', parent=styles['Normal'], fontSize=8, fontName='Helvetica-Bold',
-                        textColor=rc(self.GRAY_MID))),
-                        Paragraph(source.title(), style_small)])
-
-                if detail_rows:
-                    detail_table = Table(detail_rows, colWidths=[2.5*cm, 14.5*cm])
-                    detail_table.setStyle(TableStyle([
-                        ('BACKGROUND', (0,0), (-1,-1), rc(self.GRAY_LIGHT)),
-                        ('TOPPADDING', (0,0), (-1,-1), 5),
-                        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
-                        ('LEFTPADDING', (0,0), (-1,-1), 8),
-                        ('RIGHTPADDING', (-1,0), (-1,-1), 8),
-                        ('VALIGN', (0,0), (-1,-1), 'TOP'),
-                    ]))
-                    story.append(KeepTogether([header_table, detail_table, Spacer(1, 0.25*cm)]))
-                else:
-                    story.append(header_table)
-                    story.append(Spacer(1, 0.25*cm))
+                card = Table([[None, content]], colWidths=[0.35*cm, 16.65*cm])
+                card.setStyle(TableStyle([
+                    ('BACKGROUND',    (0,0), (0,-1),  sev_c),
+                    ('BACKGROUND',    (1,0), (1,-1),  C_WHITE),
+                    ('TOPPADDING',    (0,0), (-1,-1), 0),
+                    ('BOTTOMPADDING', (0,0), (-1,-1), 0),
+                    ('LEFTPADDING',   (0,0), (-1,-1), 0),
+                    ('RIGHTPADDING',  (0,0), (-1,-1), 0),
+                    ('LINEBELOW',     (0,0), (-1,-1), 0.5, C_GRAY_M),
+                ]))
+                story.append(card)
 
         story.append(PageBreak())
 
         # ── 5. COMPLIANCE ─────────────────────────────────────────────────────
-        story.append(Paragraph("5. ANÁLISIS DE COMPLIANCE NORMATIVO", style_h1))
-        story.append(HRFlowable(width="100%", thickness=2, color=rc(self.PURPLE), spaceAfter=8))
-
+        story += section_header("5.  ANÁLISIS DE COMPLIANCE NORMATIVO")
         compliance_data = self.data.get("compliance", {})
         if compliance_data:
             rgpd_score = compliance_data.get("rgpd", {}).get("score", 0)
-            ens_score = compliance_data.get("ens", {}).get("score", 0)
-            pci_score = compliance_data.get("pci_dss", {}).get("score", 0)
-            overall = compliance_data.get("overall_compliance", 0)
-
-            comp_table_data = [
-                ["Normativa", "Score", "Estado", "Hallazgos"],
-                ["RGPD / LOPD-GDD", f"{rgpd_score}%",
-                 "Conforme" if rgpd_score>=80 else "Parcial" if rgpd_score>=60 else "No Conforme",
-                 str(len(compliance_data.get("rgpd",{}).get("findings",[])))],
-                ["ENS (Esquema Nacional)", f"{ens_score}%",
-                 "Conforme" if ens_score>=80 else "Parcial" if ens_score>=60 else "No Conforme",
-                 str(len(compliance_data.get("ens",{}).get("findings",[])))],
-                ["PCI DSS", f"{pci_score}%",
-                 "Conforme" if pci_score>=80 else "Parcial" if pci_score>=60 else "No Conforme",
-                 str(len(compliance_data.get("pci_dss",{}).get("findings",[])))],
+            ens_score  = compliance_data.get("ens",  {}).get("score", 0)
+            pci_score  = compliance_data.get("pci_dss", {}).get("score", 0)
+            comp_rows  = [
+                [Paragraph("<b>Normativa</b>", sSmall),
+                 Paragraph("<b>Score</b>", S('CH', fontSize=8.5, fontName='Helvetica-Bold', alignment=TA_CENTER)),
+                 Paragraph("<b>Estado</b>", S('CH2', fontSize=8.5, fontName='Helvetica-Bold', alignment=TA_CENTER)),
+                 Paragraph("<b>Hallazgos</b>", S('CH3', fontSize=8.5, fontName='Helvetica-Bold', alignment=TA_CENTER))],
             ]
-            comp_table = Table(comp_table_data, colWidths=[6*cm, 3*cm, 5*cm, 3*cm])
+            for norm, score, flist in [
+                ("RGPD / LOPD-GDD", rgpd_score, compliance_data.get("rgpd",{}).get("findings",[])),
+                ("ENS",             ens_score,  compliance_data.get("ens",{}).get("findings",[])),
+                ("PCI DSS",         pci_score,  compliance_data.get("pci_dss",{}).get("findings",[])),
+            ]:
+                st = "Conforme" if score >= 80 else ("Parcial" if score >= 60 else "No Conforme")
+                sc = C_GREEN if score >= 80 else (C_ORANGE if score >= 60 else C_RED)
+                comp_rows.append([
+                    Paragraph(norm, sSmall),
+                    Paragraph(f"{score}%", S('CS', fontSize=8.5, fontName='Helvetica-Bold',
+                               textColor=sc, alignment=TA_CENTER)),
+                    Paragraph(st, S('CSS', fontSize=8.5, fontName='Helvetica-Bold',
+                               textColor=sc, alignment=TA_CENTER)),
+                    Paragraph(str(len(flist)), S('CFN', fontSize=8.5, alignment=TA_CENTER)),
+                ])
+            comp_table = Table(comp_rows, colWidths=[6*cm, 3*cm, 5*cm, 3*cm])
             comp_table.setStyle(TableStyle([
-                ('BACKGROUND', (0,0), (-1,0), rc(self.PURPLE)),
-                ('TEXTCOLOR', (0,0), (-1,0), rc(self.WHITE)),
-                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0,0), (-1,-1), 9),
-                ('ROWBACKGROUNDS', (0,1), (-1,-1), [rc(self.WHITE), rc(self.GRAY_LIGHT)]),
-                ('GRID', (0,0), (-1,-1), 0.5, rc(self.GRAY_MID)),
-                ('ALIGN', (1,0), (-1,-1), 'CENTER'),
-                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-                ('TOPPADDING', (0,0), (-1,-1), 8),
+                ('BACKGROUND',    (0,0), (-1,0),  C_NAVY),
+                ('TEXTCOLOR',     (0,0), (-1,0),  C_WHITE),
+                ('ROWBACKGROUNDS',(0,1), (-1,-1), [C_WHITE, C_ACCENT]),
+                ('LINEBELOW',     (0,0), (-1,-1), 0.4, C_GRAY_M),
+                ('TOPPADDING',    (0,0), (-1,-1), 8),
                 ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+                ('LEFTPADDING',   (0,0), (-1,-1), 10),
+                ('VALIGN',        (0,0), (-1,-1), 'MIDDLE'),
             ]))
             story.append(comp_table)
         else:
             story.append(Paragraph(
-                "No se han encontrado datos de compliance en esta sesión. "
-                "Ejecute compliance/compliance_checker.py para obtener análisis normativo.",
-                style_body))
-
+                "No se dispone de datos de compliance en esta sesión. "
+                "Ejecute <i>compliance/compliance_checker.py</i> para obtener el análisis normativo.",
+                sBody))
         story.append(PageBreak())
 
         # ── 6. PLAN DE REMEDIACIÓN ────────────────────────────────────────────
-        story.append(Paragraph("6. PLAN DE REMEDIACIÓN PRIORIZADO", style_h1))
-        story.append(HRFlowable(width="100%", thickness=2, color=rc(self.PURPLE), spaceAfter=8))
-
+        story += section_header("6.  PLAN DE REMEDIACIÓN PRIORIZADO")
         story.append(Paragraph(
-            "Los hallazgos se presentan ordenados por criticidad y facilidad de remediación. "
-            "Se recomienda abordar los hallazgos críticos en un plazo máximo de 72 horas, "
-            "los altos en 2 semanas y los medios en el siguiente ciclo de mejora.", style_body))
+            "Los hallazgos se priorizan por criticidad. Los críticos deben resolverse en "
+            "<b>72 horas</b>, los altos en <b>2 semanas</b> y los medios en el siguiente "
+            "ciclo de mejora.", sBody))
         story.append(Spacer(1, 0.3*cm))
 
-        remediation_data = [["#", "Hallazgo", "Severidad", "Plazo", "Esfuerzo"]]
-        timeframes = {"critical": "72h", "high": "2 semanas", "medium": "1 mes", "low": "3 meses"}
-        efforts = {"critical": "Alto", "high": "Medio-Alto", "medium": "Medio", "low": "Bajo"}
+        tf = {"critical": "72 h", "high": "2 semanas", "medium": "1 mes", "low": "3 meses"}
+        ef = {"critical": "Alto",  "high": "Medio-Alto", "medium": "Medio", "low": "Bajo"}
 
-        for i, f in enumerate(sorted_findings[:20], 1):
-            sev = f.get("severity", "info")
-            name = f.get("type", f.get("check", "hallazgo")).replace('_', ' ').title()[:45]
-            remediation_data.append([
-                str(i), name, sev.upper(),
-                timeframes.get(sev, "3 meses"),
-                efforts.get(sev, "Variable")
+        rem_hdr = [Paragraph(h, S('RH', fontSize=8, fontName='Helvetica-Bold', textColor=C_WHITE,
+                              alignment=TA_CENTER if h != "Hallazgo" else TA_LEFT))
+                   for h in ["#", "Hallazgo", "Severidad", "Plazo", "Esfuerzo"]]
+        rem_rows = [rem_hdr]
+        for i, f in enumerate(sorted_findings[:25], 1):
+            sev  = f.get("severity", "info")
+            name = self._strip_ansi(str(f.get("title") or f.get("type", "Hallazgo")))[:50]
+            sev_c = SEV_COLORS.get(sev, C_GRAY_M)
+            rem_rows.append([
+                Paragraph(str(i), S('RI', fontSize=8.5, alignment=TA_CENTER)),
+                Paragraph(name,   S('RN', fontSize=8.5)),
+                Paragraph(SEV_LABELS.get(sev, sev.upper()),
+                          S('RS', fontSize=8, fontName='Helvetica-Bold',
+                            textColor=sev_c, alignment=TA_CENTER)),
+                Paragraph(tf.get(sev,"—"),  S('RT', fontSize=8.5, alignment=TA_CENTER)),
+                Paragraph(ef.get(sev,"—"),  S('RE', fontSize=8.5, alignment=TA_CENTER)),
             ])
-
-        if len(remediation_data) > 1:
-            rem_table = Table(remediation_data, colWidths=[0.8*cm, 8.5*cm, 2.5*cm, 2.5*cm, 2.7*cm])
-            rem_style = TableStyle([
-                ('BACKGROUND', (0,0), (-1,0), rc(self.PURPLE)),
-                ('TEXTCOLOR', (0,0), (-1,0), rc(self.WHITE)),
-                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0,0), (-1,-1), 8.5),
-                ('ROWBACKGROUNDS', (0,1), (-1,-1), [rc(self.WHITE), rc(self.GRAY_LIGHT)]),
-                ('GRID', (0,0), (-1,-1), 0.5, rc(self.GRAY_MID)),
-                ('ALIGN', (0,0), (-1,-1), 'LEFT'),
-                ('ALIGN', (0,0), (0,-1), 'CENTER'),
-                ('ALIGN', (2,0), (-1,-1), 'CENTER'),
-                ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-                ('TOPPADDING', (0,0), (-1,-1), 6),
-                ('BOTTOMPADDING', (0,0), (-1,-1), 6),
-                ('LEFTPADDING', (0,0), (-1,-1), 6),
-            ])
-            # Colorear severidades
-            for row_idx, row_data in enumerate(remediation_data[1:], 1):
-                sev = row_data[2].lower()
-                sev_c = self.SEVERITY_COLORS.get(sev, (0.5, 0.5, 0.5))
-                rem_style.add('TEXTCOLOR', (2, row_idx), (2, row_idx), rc(sev_c))
-                rem_style.add('FONTNAME', (2, row_idx), (2, row_idx), 'Helvetica-Bold')
-            rem_table.setStyle(rem_style)
-            story.append(rem_table)
-
+        rem_table = Table(rem_rows, colWidths=[0.8*cm, 8.5*cm, 2.4*cm, 2.4*cm, 2.9*cm])
+        rem_table.setStyle(TableStyle([
+            ('BACKGROUND',    (0,0), (-1,0),  C_NAVY),
+            ('ROWBACKGROUNDS',(0,1), (-1,-1), [C_WHITE, C_ACCENT]),
+            ('LINEBELOW',     (0,0), (-1,-1), 0.4, C_GRAY_M),
+            ('TOPPADDING',    (0,0), (-1,-1), 6),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+            ('LEFTPADDING',   (0,0), (-1,-1), 6),
+            ('VALIGN',        (0,0), (-1,-1), 'MIDDLE'),
+        ]))
+        story.append(rem_table)
         story.append(PageBreak())
 
         # ── 7. CONCLUSIONES ───────────────────────────────────────────────────
-        story.append(Paragraph("7. CONCLUSIONES Y SIGUIENTES PASOS", style_h1))
-        story.append(HRFlowable(width="100%", thickness=2, color=rc(self.PURPLE), spaceAfter=8))
+        story += section_header("7.  CONCLUSIONES Y SIGUIENTES PASOS")
+        story.append(Paragraph(
+            f"Tras el análisis realizado, <b>{self.client_name}</b> presenta un nivel de riesgo "
+            f"<b>{risk_level}</b> con <b>{total_n} hallazgos</b> identificados "
+            f"({critical_n} críticos, {high_n} altos, {medium_n} medios, {low_n} bajos). "
+            f"Se recomienda abordar de forma inmediata los hallazgos críticos e implementar "
+            f"un programa de seguridad continuo.", sBody))
+        story.append(Spacer(1, 0.4*cm))
 
-        conclusion_text = (
-            "Tras el análisis realizado, se concluye que <b>{client}</b> presenta un nivel de "
-            "riesgo <b>{level}</b> con <b>{total} hallazgos identificados</b> ({crit} críticos, "
-            "{high} altos, {med} medios, {low} bajos). "
-            "Se recomienda abordar de forma inmediata los hallazgos críticos y establecer un "
-            "programa de mejora continua de seguridad que incluya revisiones periódicas "
-            "y formación al personal."
-        ).format(
-            client=self.client_name, level=risk_level, total=total_n,
-            crit=critical_n, high=high_n, med=medium_n, low=low_n
-        )
-        story.append(Paragraph(conclusion_text, style_body))
-        story.append(Spacer(1, 0.5*cm))
-
-        next_steps = [
-            ["Inmediato\n(0-72h)", "Remediar hallazgos críticos identificados en este informe"],
-            ["Corto plazo\n(2 semanas)", "Implementar controles de seguridad para hallazgos altos"],
-            ["Medio plazo\n(1 mes)", "Resolver hallazgos medios y configurar monitoreo continuo"],
-            ["Largo plazo\n(3 meses)", "Auditoría de seguimiento para verificar remediaciones"],
-            ["Continuo", "Programa de formación en ciberseguridad para el personal"],
+        steps = [
+            ("Inmediato  (0–72 h)",   C_RED,    "Remediar todos los hallazgos críticos identificados en este informe."),
+            ("Corto plazo  (2 sem.)", C_ORANGE, "Implementar controles de seguridad para los hallazgos de nivel alto."),
+            ("Medio plazo  (1 mes)",  C_YELLOW, "Resolver hallazgos medios y configurar monitoreo continuo."),
+            ("Largo plazo  (3 mes.)", C_GREEN,  "Auditoría de seguimiento para verificar todas las remediaciones."),
+            ("Continuo",              C_PURPLE, "Programa de formación en ciberseguridad para el personal."),
         ]
-        ns_data = [["Plazo", "Acción"]] + next_steps
-        ns_table = Table(ns_data, colWidths=[3.5*cm, 13.5*cm])
-        ns_table.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,0), rc(self.PURPLE)),
-            ('TEXTCOLOR', (0,0), (-1,0), rc(self.WHITE)),
-            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-            ('FONTNAME', (0,1), (0,-1), 'Helvetica-Bold'),
-            ('TEXTCOLOR', (0,1), (0,-1), rc(self.PURPLE)),
-            ('FONTSIZE', (0,0), (-1,-1), 9),
-            ('ROWBACKGROUNDS', (0,1), (-1,-1), [rc(self.WHITE), rc(self.GRAY_LIGHT)]),
-            ('GRID', (0,0), (-1,-1), 0.5, rc(self.GRAY_MID)),
-            ('ALIGN', (0,0), (-1,-1), 'LEFT'),
-            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-            ('TOPPADDING', (0,0), (-1,-1), 8),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 8),
-            ('LEFTPADDING', (0,0), (-1,-1), 10),
-        ]))
-        story.append(ns_table)
-        story.append(Spacer(1, 1*cm))
+        for plazo, col, accion in steps:
+            row = Table([[
+                Table([[Paragraph(plazo, S('SP', fontSize=8, fontName='Helvetica-Bold',
+                                          textColor=C_WHITE, alignment=TA_CENTER))]],
+                      colWidths=[3.2*cm],
+                      style=TableStyle([('BACKGROUND',(0,0),(-1,-1),col),
+                                        ('TOPPADDING',(0,0),(-1,-1),8),
+                                        ('BOTTOMPADDING',(0,0),(-1,-1),8)])),
+                Paragraph(accion, S('SA', fontSize=9, fontName='Helvetica',
+                                    textColor=C_DARK)),
+            ]], colWidths=[3.4*cm, 13.6*cm])
+            row.setStyle(TableStyle([
+                ('LINEBELOW',     (0,0), (-1,-1), 0.5, C_GRAY_M),
+                ('TOPPADDING',    (0,0), (-1,-1), 0),
+                ('BOTTOMPADDING', (0,0), (-1,-1), 0),
+                ('LEFTPADDING',   (1,0), (1,-1),  10),
+                ('VALIGN',        (0,0), (-1,-1), 'MIDDLE'),
+                ('BACKGROUND',    (1,0), (1,-1),  C_WHITE),
+            ]))
+            story.append(row)
 
-        # Footer final
-        footer_data = [[Paragraph(
-            f"{self.company_name} · Informe confidencial · {ts_str}",
-            ParagraphStyle('Footer', parent=styles['Normal'],
-                fontSize=8, textColor=rc(self.WHITE), alignment=TA_CENTER))]]
-        footer_table = Table(footer_data, colWidths=[17*cm])
-        footer_table.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,-1), rc(self.PURPLE)),
-            ('TOPPADDING', (0,0), (-1,-1), 8),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+        story.append(Spacer(1, 0.8*cm))
+        final = Table([[Paragraph(
+            f"{self.company_name}  ·  Purple Team Security Assessment  ·  {ts_str}",
+            S('FN', fontSize=8, fontName='Helvetica', textColor=C_WHITE, alignment=TA_CENTER))]],
+            colWidths=[17*cm])
+        final.setStyle(TableStyle([
+            ('BACKGROUND',    (0,0), (-1,-1), C_NAVY),
+            ('TOPPADDING',    (0,0), (-1,-1), 10),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 10),
         ]))
-        story.append(footer_table)
+        story.append(final)
 
-        # Construir PDF
         info("Generando PDF profesional...")
-        doc.build(story)
+        doc.build(story,
+                  onFirstPage=cover_page,
+                  onLaterPages=page_footer)
         ok(f"Informe PDF generado: {output_path}")
         return str(output_path)
 
