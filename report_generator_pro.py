@@ -15,6 +15,7 @@
 """
 
 import os
+import re
 import sys
 import json
 import argparse
@@ -103,6 +104,31 @@ class ProfessionalReportGenerator:
                         self._extract_findings(content, module)
             except Exception:
                 pass
+        self._deduplicate_findings()
+
+    def _strip_ansi(self, text):
+        return re.sub(r'\x1b\[[0-9;]*[mGKHF]', '', str(text))
+
+    def _is_junk_finding(self, text):
+        """Descarta fragmentos JSON y contadores que no son hallazgos reales."""
+        t = text.strip()
+        if re.match(r'^"[a-z_]+"\s*:\s*', t):
+            return True
+        if re.match(r'^(Summary|Total|Score|Risk):', t, re.IGNORECASE):
+            return True
+        return False
+
+    def _make_title(self, text, module):
+        """Extrae un título limpio del texto del hallazgo."""
+        clean = self._strip_ansi(text).strip()
+        # Formato scanner: [HIGH ] 200 0B text/html /wp-admin
+        m = re.search(r'\[(?:HIGH|MEDIUM|LOW|CRITICAL|INFO)\s*\]\s*\d+\s+\S+\s+\S+\s+(\S+)', clean)
+        if m:
+            path = m.group(1)
+            if module in ("directories", "analysis"):
+                return f"Ruta expuesta: {path}"
+            return path
+        return clean[:100]
 
     def _infer_severity(self, text):
         t = str(text).upper()
@@ -121,11 +147,14 @@ class ProfessionalReportGenerator:
         if isinstance(item, dict):
             # Blue Team format: {"module": ..., "finding": "texto"}
             if "finding" in item and "title" not in item:
-                text = item["finding"]
-                item["title"] = text[:120]
-                item["description"] = text
+                raw = item["finding"]
+                if self._is_junk_finding(self._strip_ansi(raw)):
+                    return None
+                clean = self._strip_ansi(raw)
+                item["title"] = self._make_title(raw, item.get("module", module))
+                item["description"] = clean
                 if "severity" not in item:
-                    item["severity"] = self._infer_severity(text)
+                    item["severity"] = self._infer_severity(raw)
             if "severity" not in item:
                 title = item.get("title", item.get("name", str(item)))
                 item["severity"] = self._infer_severity(title)
@@ -133,10 +162,14 @@ class ProfessionalReportGenerator:
             item.setdefault("_source_key", key)
             return item
         elif isinstance(item, str) and item.strip():
+            raw = item
+            if self._is_junk_finding(self._strip_ansi(raw)):
+                return None
+            clean = self._strip_ansi(raw)
             return {
-                "title": item[:120],
-                "description": item,
-                "severity": self._infer_severity(item),
+                "title": self._make_title(raw, module),
+                "description": clean,
+                "severity": self._infer_severity(raw),
                 "_source_module": module,
                 "_source_key": key,
             }
@@ -144,6 +177,9 @@ class ProfessionalReportGenerator:
 
     def _extract_findings(self, data, module):
         """Extrae hallazgos en formato normalizado."""
+        # Evitar re-agregar all_findings del módulo analysis (ya vienen de los módulos individuales)
+        if module == "analysis":
+            return
         finding_keys = [
             "findings", "vulnerabilities", "issues", "ioc_findings",
             "hardening_findings", "exposed_assets", "log_anomalies",
@@ -157,6 +193,16 @@ class ProfessionalReportGenerator:
                 normalized = self._normalize_finding(item, module, key)
                 if normalized:
                     self.all_findings.append(normalized)
+
+    def _deduplicate_findings(self):
+        seen = set()
+        deduped = []
+        for f in self.all_findings:
+            key = self._strip_ansi(f.get('description', f.get('title', str(f))))[:120]
+            if key not in seen:
+                seen.add(key)
+                deduped.append(f)
+        self.all_findings = deduped
 
     def _severity_sort_key(self, f):
         order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
@@ -509,10 +555,11 @@ class ProfessionalReportGenerator:
             for i, finding in enumerate(sorted_findings[:50], 1):  # Max 50 findings
                 sev = finding.get("severity", "info")
                 sev_color = rc(self.SEVERITY_COLORS.get(sev, (0.5, 0.5, 0.5)))
-                finding_type = finding.get("type", finding.get("check", "hallazgo")).replace('_', ' ').title()
-                detail = finding.get("detail", finding.get("description", ""))
+                finding_type = finding.get("title") or finding.get("type", finding.get("check", "Hallazgo"))
+                finding_type = self._strip_ansi(str(finding_type))[:80]
+                detail = self._strip_ansi(str(finding.get("description", finding.get("detail", ""))))
                 remediation = finding.get("remediation", "")
-                source = finding.get("_source_module", "")
+                source = finding.get("module", finding.get("_source_module", ""))
 
                 # Header del hallazgo
                 finding_header = [[
@@ -629,7 +676,7 @@ class ProfessionalReportGenerator:
 
         for i, f in enumerate(sorted_findings[:20], 1):
             sev = f.get("severity", "info")
-            name = f.get("type", f.get("check", "hallazgo")).replace('_', ' ').title()[:45]
+            name = self._strip_ansi(str(f.get("title") or f.get("type", f.get("check", "Hallazgo"))))[:45]
             remediation_data.append([
                 str(i), name, sev.upper(),
                 timeframes.get(sev, "3 meses"),
